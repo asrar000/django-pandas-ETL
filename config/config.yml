@@ -1,0 +1,29 @@
+api:
+  base_url: "https://dummyjson.com"
+  carts_endpoint: "/carts"
+  users_endpoint: "/users"
+  max_retries: 5
+  backoff_factor: 2
+  timeout: 30
+  limit: 100
+
+processing:
+  num_synthetic_records: 500
+  currency: "BDT"
+  currency_symbol: "৳"
+
+database:
+  host: "localhost"
+  port: 5432
+  name: "etl_db"
+  user: "etl_user"
+  password: "etl_password"
+
+paths:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  logs_dir: "logs"
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"

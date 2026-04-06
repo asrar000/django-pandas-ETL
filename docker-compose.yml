@@ -1,0 +1,37 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  BDT ETL Pipeline — PostgreSQL via Docker
+#
+#  Start:   docker compose up -d
+#  Stop:    docker compose down
+#  Logs:    docker compose logs -f db
+#  psql:    docker compose exec db psql -U etl_user -d etl_db
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: bdt_etl_postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB:       etl_db
+      POSTGRES_USER:     etl_user
+      POSTGRES_PASSWORD: etl_password
+
+    ports:
+      - "5432:5432"         # host:container — accessible at localhost:5432
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U etl_user -d etl_db"]
+      interval: 10s
+      timeout:  5s
+      retries:  5
+
+volumes:
+  postgres_data:
+    driver: local
