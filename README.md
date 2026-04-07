@@ -55,6 +55,7 @@ pip install -r requirements.txt
 docker compose up -d
 
 # Wait ~10 s for Postgres to be healthy, then run migrations
+python manage.py makemigrations
 python manage.py migrate
 ```
 
