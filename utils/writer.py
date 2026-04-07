@@ -51,7 +51,7 @@ def read_processed_csv(filename: str) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(
             f"Processed file not found: {path}\n"
-            "  → Run 'python orchestrator.py' first."
+            "  → Run 'python manage.py etl_postgres' first."
         )
     df = pd.read_csv(path, encoding="utf-8")
     logger.info(f"Read CSV ← {path}  ({len(df)} rows)")

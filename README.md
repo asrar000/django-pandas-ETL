@@ -7,7 +7,7 @@ A production-structured Django + Pandas + PostgreSQL ETL pipeline that extracts 
 ## 📐 Architecture Overview
 
 ```
-orchestrator.py          ← single entry point (Step 1–5)
+pipeline/management/commands/etl_postgres.py  ← single entry point (extract → load)
 │
 ├── extractor/           ← Step 1 : HTTP fetch with retries & exponential back-off
 ├── processing/          ← Step 2 : synthetic order generation  |  Step 3 : enrichment
@@ -16,7 +16,9 @@ orchestrator.py          ← single entry point (Step 1–5)
 ├── services/            ← Step 5 (DB) : ORM upsert helpers
 │
 ├── pipeline/            ← Django app : models · admin · management command
-│   └── management/commands/dump_to_postgres.py
+│   └── management/commands/
+│       ├── etl_postgres.py
+│       └── dump_to_postgres.py
 │
 ├── etl_core/            ← Django project : settings · urls · wsgi
 ├── config/              ← config.yml  +  loader.py
@@ -39,7 +41,7 @@ orchestrator.py          ← single entry point (Step 1–5)
 
 ---
 
-## 🚀 Quick Start (two commands)
+## 🚀 Quick Start
 
 ### Step 0 — Install dependencies & start Postgres
 
@@ -61,10 +63,10 @@ python manage.py migrate
 
 ---
 
-### Command 1 — Run the full ETL pipeline
+### Command 1 — Run the full ETL + PostgreSQL load
 
 ```bash
-python orchestrator.py
+python manage.py etl_postgres
 ```
 
 **What this does:**
@@ -73,12 +75,13 @@ python orchestrator.py
 3. Enriches every order with the required totals, discounts, timestamps, email domain, and order-complexity fields
 4. Transforms into `customer_analytics` and `order_analytics` DataFrames
 5. Writes `data/processed/customer_analytics.csv` and `data/processed/order_analytics.csv`
+6. Loads both analytics datasets into PostgreSQL using Django ORM upserts
 
 Logs stream to the console **and** `logs/etl_pipeline.log`.
 
 ---
 
-### Command 2 — Dump processed data into PostgreSQL
+### Optional Command — Reload existing processed CSVs into PostgreSQL only
 
 ```bash
 python manage.py dump_to_postgres
@@ -88,7 +91,7 @@ python manage.py dump_to_postgres
 - Reads the two processed CSVs
 - Upserts every row into PostgreSQL using Django ORM (`update_or_create`)
 - Safe to rerun against the same processed CSVs — matching `customer_id` and `order_id` rows are updated instead of duplicated
-- If you run `orchestrator.py` again first, freshly synthesised orders get new UUIDs, so new `order_analytics` rows will be inserted
+- If you run `python manage.py etl_postgres` again first, freshly synthesised orders get new UUIDs, so new `order_analytics` rows will be inserted
 
 ---
 
@@ -237,13 +240,13 @@ ecommerce_etl/
 │   ├── models.py             ← CustomerAnalytics, OrderAnalytics
 │   ├── admin.py
 │   └── management/commands/
+│       ├── etl_postgres.py
 │       └── dump_to_postgres.py
 ├── data/
 │   ├── raw/
 │   └── processed/
 ├── logs/
 ├── manage.py
-├── orchestrator.py           ← Command 1
 ├── requirements.txt
 ├── docker-compose.yml
 └── README.md
@@ -257,6 +260,6 @@ ecommerce_etl/
 |---------|-----|
 | `connection refused` on port 5432 | Run `docker compose up -d` and wait 15 s |
 | `ModuleNotFoundError: config` | Make sure you activated the venv and are in the project root directory |
-| `FileNotFoundError: customer_analytics.csv` | Run `python orchestrator.py` before the dump command |
+| `FileNotFoundError: customer_analytics.csv` | Run `python manage.py etl_postgres` before the dump command |
 | API fetch fails (network issue) | The pipeline auto-falls back to fully synthetic data — no action needed |
 | `django.db.utils.OperationalError` | Check `config/config.yml` DB credentials match `docker-compose.yml` |
