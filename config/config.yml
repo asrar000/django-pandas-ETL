@@ -11,6 +11,17 @@ processing:
   num_synthetic_records: 10000
   currency_symbol: "$"
 
+spark:
+  app_name: "ecommerce_etl_iceberg"
+  master: "local[*]"
+  shuffle_partitions: 8
+
+iceberg:
+  catalog: "local"
+  database: "analytics"
+  warehouse_dir: "data/iceberg/warehouse"
+  package: "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.1"
+
 database:
   host: "localhost"
   port: 5432
@@ -21,6 +32,7 @@ database:
 paths:
   raw_dir: "data/raw"
   processed_dir: "data/processed"
+  iceberg_dir: "data/iceberg"
   logs_dir: "logs"
 
 logging:

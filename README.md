@@ -1,19 +1,21 @@
 # 🛒 Generic E-Commerce ETL Pipeline
 
-A production-structured Django + Pandas + PostgreSQL ETL pipeline that extracts seed e-commerce data, synthesises realistic **generic e-commerce** orders at scale, enriches and transforms them into two analytical tables, and loads the results into PostgreSQL.
+A production-structured Django ETL project with two parallel analytics paths from the same extracted seed data:
+- a Pandas path that writes processed CSVs and upserts PostgreSQL through Django ORM
+- a PySpark path that mirrors the same synthesize, enrich, and transform logic and writes Iceberg tables
 
 ---
 
 ## 📐 Architecture Overview
 
 ```
-pipeline/management/commands/etl_postgres.py  ← single entry point (extract → load)
+pipeline/management/commands/etl_postgres.py  ← single entry point
 │
-├── extractor/           ← Step 1 : HTTP fetch with retries & exponential back-off
-├── processing/          ← Step 2 : synthetic order generation  |  Step 3 : enrichment
-├── transformation/      ← Step 4 : customer_analytics & order_analytics builders
+├── extractor/           ← Step 1 : shared HTTP extraction with retries/back-off
+├── processing/          ← Pandas + PySpark synthesis and enrichment logic
+├── transformation/      ← Pandas + PySpark analytics builders
 ├── utils/               ← paths · logger · writer  (shared, imported everywhere)
-├── services/            ← Step 5 (DB) : ORM upsert helpers
+├── services/            ← PostgreSQL ORM loaders + Spark/Iceberg helpers
 │
 ├── pipeline/            ← Django app : models · admin · management command
 │   └── management/commands/
@@ -24,8 +26,9 @@ pipeline/management/commands/etl_postgres.py  ← single entry point (extract �
 ├── config/              ← config.yml  +  loader.py
 │
 ├── data/
-│   ├── raw/             ← JSON snapshots from API & synthesiser
-│   └── processed/       ← customer_analytics.csv & order_analytics.csv
+│   ├── raw/             ← JSON snapshots from API & Pandas synthesiser
+│   ├── processed/       ← customer_analytics.csv & order_analytics.csv
+│   └── iceberg/         ← local Iceberg warehouse files
 └── logs/                ← etl_pipeline.log
 ```
 
@@ -36,6 +39,7 @@ pipeline/management/commands/etl_postgres.py  ← single entry point (extract �
 | Tool | Version |
 |------|---------|
 | Python | ≥ 3.11 |
+| Java | ≥ 17 |
 | Docker + Docker Compose | any recent version |
 | pip | ≥ 23 |
 
@@ -63,7 +67,7 @@ python manage.py migrate
 
 ---
 
-### Command 1 — Run the full ETL + PostgreSQL load
+### Command 1 — Run the full ETL, PostgreSQL load, and Iceberg write
 
 ```bash
 python manage.py etl_postgres
@@ -71,11 +75,11 @@ python manage.py etl_postgres
 
 **What this does:**
 1. Fetches raw carts & users from `https://dummyjson.com` (with retry + back-off)
-2. Synthesises **10,000 generic orders** with globally recognizable names, cities, products, payment methods, and pricing
-3. Enriches every order with the required totals, discounts, timestamps, email domain, and order-complexity fields
-4. Transforms into `customer_analytics` and `order_analytics` DataFrames
-5. Writes `data/processed/customer_analytics.csv` and `data/processed/order_analytics.csv`
-6. Loads both analytics datasets into PostgreSQL using Django ORM upserts
+2. Launches the existing Pandas branch for synthesize → enrich → transform → CSV → PostgreSQL
+3. Launches the parallel PySpark branch for synthesize → enrich → transform → Iceberg
+4. Writes `data/processed/customer_analytics.csv` and `data/processed/order_analytics.csv`
+5. Upserts both analytics datasets into PostgreSQL using Django ORM
+6. Creates or replaces the Iceberg tables `local.analytics.customer_analytics` and `local.analytics.order_analytics`
 
 Logs stream to the console **and** `logs/etl_pipeline.log`.
 
@@ -92,6 +96,7 @@ python manage.py dump_to_postgres
 - Upserts every row into PostgreSQL using Django ORM (`update_or_create`)
 - Safe to rerun against the same processed CSVs — matching `customer_id` and `order_id` rows are updated instead of duplicated
 - If you run `python manage.py etl_postgres` again first, freshly synthesised orders get new UUIDs, so new `order_analytics` rows will be inserted
+- This command only reloads PostgreSQL; Iceberg is produced by `python manage.py etl_postgres`
 
 ---
 
@@ -109,6 +114,17 @@ processing:
   num_synthetic_records: 10000   # change this to generate more/fewer orders
   currency_symbol: "$"
 
+spark:
+  app_name: "ecommerce_etl_iceberg"
+  master: "local[*]"
+  shuffle_partitions: 8
+
+iceberg:
+  catalog: "local"
+  database: "analytics"
+  warehouse_dir: "data/iceberg/warehouse"
+  package: "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.1"
+
 database:
   host: "localhost"
   port: 5432
@@ -116,6 +132,8 @@ database:
   user: "etl_user"
   password: "etl_password"
 ```
+
+The Spark branch writes to a local Hadoop Iceberg catalog rooted at `data/iceberg/warehouse`.
 
 Values are loaded lazily via `config/loader.py` using dot-notation:
 ```python
@@ -164,6 +182,19 @@ db_host = get("database.host")   # → "localhost"
 
 ---
 
+## 🧊 Iceberg Tables
+
+The PySpark branch writes the same analytics datasets to Iceberg tables:
+- `local.analytics.customer_analytics`
+- `local.analytics.order_analytics`
+
+The local warehouse path is:
+- `data/iceberg/warehouse`
+
+Each `etl_postgres` run replaces the latest Iceberg table contents while keeping Iceberg table metadata and snapshots managed by the table format.
+
+---
+
 ## 🔍 Querying Data
 
 ```bash
@@ -197,6 +228,19 @@ from django.db.models import Sum
 OrderAnalytics.objects.aggregate(total=Sum("final_amount"))
 ```
 
+Via PySpark SQL:
+```bash
+.venv/bin/python
+```
+```python
+from services.spark_service import build_spark_session
+
+spark = build_spark_session()
+spark.sql("SELECT COUNT(*) FROM local.analytics.customer_analytics").show()
+spark.sql("SELECT payment_method, SUM(final_amount) AS revenue FROM local.analytics.order_analytics GROUP BY payment_method").show()
+spark.stop()
+```
+
 ---
 
 ## 🐳 Docker Reference
@@ -222,12 +266,18 @@ ecommerce_etl/
 │   └── api_extractor.py      ← HTTP + retry/backoff
 ├── processing/
 │   ├── synthesizer.py        ← generic synthetic data generator
-│   └── enrichment.py        ← derived field computation
+│   ├── spark_synthesizer.py  ← Spark synthetic data generator
+│   ├── enrichment.py         ← Pandas branch derived fields
+│   └── spark_enrichment.py   ← Spark branch derived fields
 ├── transformation/
 │   ├── customer_transformer.py
-│   └── order_transformer.py
+│   ├── order_transformer.py
+│   ├── spark_customer_transformer.py
+│   └── spark_order_transformer.py
 ├── services/
-│   └── db_service.py         ← ORM upsert helpers
+│   ├── db_service.py         ← ORM upsert helpers
+│   ├── spark_service.py      ← Spark session + Iceberg catalog config
+│   └── iceberg_service.py    ← Iceberg table writers
 ├── utils/
 │   ├── logger.py             ← shared logger factory
 │   ├── paths.py              ← all path constants
@@ -244,7 +294,8 @@ ecommerce_etl/
 │       └── dump_to_postgres.py
 ├── data/
 │   ├── raw/
-│   └── processed/
+│   ├── processed/
+│   └── iceberg/
 ├── logs/
 ├── manage.py
 ├── requirements.txt
@@ -263,3 +314,5 @@ ecommerce_etl/
 | `FileNotFoundError: customer_analytics.csv` | Run `python manage.py etl_postgres` before the dump command |
 | API fetch fails (network issue) | The pipeline auto-falls back to fully synthetic data — no action needed |
 | `django.db.utils.OperationalError` | Check `config/config.yml` DB credentials match `docker-compose.yml` |
+| Spark/Iceberg startup is slow on the first run | Spark downloads the Iceberg runtime JAR once into `~/.ivy2`; later runs are faster |
+| Iceberg write fails before Spark starts | Make sure Java is installed and the machine can reach Maven Central for the Iceberg package download |

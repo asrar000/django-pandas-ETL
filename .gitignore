@@ -19,6 +19,7 @@ db.sqlite3
 # Data (generated at runtime)
 data/raw/
 data/processed/
+data/iceberg/
 logs/
 
 # OS
