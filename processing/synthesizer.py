@@ -1,12 +1,12 @@
 """
-Synthesizer — generates realistic Bangladeshi Taka (BDT) e-commerce data.
+Synthesizer — generates realistic generic e-commerce data.
 
 The API seed (real carts/users) is used as a structural template.
 We always synthesise up to num_synthetic_records orders with:
-  • Bangladeshi first/last names and cities
-  • Products with BDT price ranges
-  • Payment methods common in Bangladesh (bKash, Nagad, etc.)
-  • Local courier/delivery providers
+  • Globally recognizable first/last names and cities
+  • Products with realistic USD price ranges
+  • Common e-commerce payment methods
+  • Standard shipping providers
 """
 import random
 import uuid
@@ -17,117 +17,116 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# ── Bangladeshi reference data ────────────────────────────────────────────────
-_BD_FIRST_NAMES = [
-    "Rahim", "Karim", "Hasan", "Hussain", "Ahmed", "Ali", "Reza", "Farhan",
-    "Sakib", "Tanvir", "Rafiq", "Sabbir", "Mahmud", "Arif", "Belal",
-    "Nadia", "Fatima", "Ayesha", "Taslima", "Sumaiya", "Mim", "Tanha",
-    "Ritu", "Puja", "Jannatul", "Rabeya", "Shahin", "Shafiul", "Mostak",
-    "Zahid", "Nasrin", "Parvin", "Rubel", "Monir", "Sohel",
+# ── Generic e-commerce reference data ────────────────────────────────────────
+_FIRST_NAMES = [
+    "Alex", "Taylor", "Jordan", "Morgan", "Casey", "Avery", "Jamie", "Riley",
+    "Noah", "Emma", "Liam", "Olivia", "Ethan", "Sophia", "Mia", "Lucas",
+    "Isabella", "Aiden", "Harper", "Amelia", "Daniel", "Chloe", "Ella",
+    "Mason", "Zoe", "Levi", "Aria", "Logan", "Hannah", "Owen", "Luna",
 ]
 
-_BD_LAST_NAMES = [
-    "Rahman", "Islam", "Hossain", "Ahmed", "Khan", "Chowdhury", "Akhter",
-    "Begum", "Molla", "Sheikh", "Talukder", "Sarkar", "Mondal", "Roy",
-    "Das", "Biswas", "Paul", "Ghosh", "Dey", "Saha", "Alam", "Bhuiyan",
+_LAST_NAMES = [
+    "Smith", "Johnson", "Brown", "Garcia", "Lee", "Martinez", "Davis",
+    "Kim", "Patel", "Anderson", "Miller", "Clark", "Wright", "Lopez",
+    "Walker", "Hall", "Young", "Allen", "Scott", "Green", "Baker", "Adams",
 ]
 
-_BD_CITIES = [
-    "Dhaka", "Chattogram", "Sylhet", "Rajshahi", "Khulna", "Barishal",
-    "Mymensingh", "Rangpur", "Comilla", "Narayanganj", "Gazipur",
-    "Tongi", "Bogura", "Jessore", "Dinajpur", "Manikganj", "Narsingdi",
+_CITIES = [
+    "New York", "Los Angeles", "Chicago", "Toronto", "London", "Berlin",
+    "Paris", "Amsterdam", "Sydney", "Singapore", "Dubai", "Tokyo",
+    "Madrid", "Dublin", "Mumbai", "Sao Paulo", "Mexico City", "Cape Town",
 ]
 
 _EMAIL_DOMAINS = [
-    "gmail.com", "yahoo.com", "hotmail.com", "outlook.com",
-    "bd.com", "grameenphone.com", "robi.com.bd",
+    "gmail.com", "yahoo.com", "outlook.com", "icloud.com",
+    "proton.me", "examplemail.com",
 ]
 
 _PAYMENT_METHODS = [
-    "bKash", "Nagad", "Rocket", "Upay", "Card", "Cash on Delivery",
-    "DBBL Nexus", "SureCash",
+    "Credit Card", "Debit Card", "PayPal", "Apple Pay", "Google Pay",
+    "Bank Transfer", "Gift Card", "Cash on Delivery", "Buy Now, Pay Later",
 ]
 
 _COURIERS = [
-    ("Sundarban Courier", 60, 120),
-    ("SA Paribahan",       80, 150),
-    ("Pathao Courier",     50,  90),
-    ("Redx",               55,  95),
-    ("Paperfly",           60, 100),
-    ("eCourier",           70, 110),
+    ("UPS",               4, 12),
+    ("FedEx",             5, 18),
+    ("DHL",               8, 22),
+    ("USPS",              4, 10),
+    ("Amazon Logistics",  3,  9),
+    ("Regional Carrier",  5, 14),
 ]
 
-# Product catalogue with (name, min_BDT_price, max_BDT_price)
-_BD_PRODUCTS: dict[str, list[tuple[str, float, float]]] = {
+# Product catalogue with (name, min_USD_price, max_USD_price)
+_PRODUCTS: dict[str, list[tuple[str, float, float]]] = {
     "electronics": [
-        ("Smart TV 32\"",        22_000, 32_000),
-        ("Bluetooth Speaker",     1_200,  3_500),
-        ("Power Bank 10000mAh",     900,  1_800),
-        ("USB Hub 4-Port",          300,    700),
-        ("Laptop Charger",          800,  1_600),
+        ("4K Smart TV 55-inch",   399, 899),
+        ("Bluetooth Speaker",      29, 129),
+        ("Wireless Earbuds",       49, 199),
+        ("USB-C Hub 7-in-1",       24,  79),
+        ("Laptop Stand",           25,  89),
     ],
     "clothing": [
-        ("Panjabi Set",             600,  1_600),
-        ("Salwar Kameez",           800,  2_200),
-        ("Jeans Pant",              700,  1_900),
-        ("T-Shirt Pack (3 pcs)",    350,    900),
-        ("Saree Cotton",          1_000,  3_500),
+        ("Classic Cotton T-Shirt",  15,  35),
+        ("Premium Hoodie",          35,  95),
+        ("Slim Fit Jeans",          30,  85),
+        ("Running Shorts",          18,  45),
+        ("Winter Jacket",           60, 180),
     ],
     "groceries": [
-        ("Mustard Oil 1L",          180,    240),
-        ("Basmati Rice 5kg",        450,    650),
-        ("Masoor Daal 1kg",          90,    140),
-        ("Hilsha Fish 1kg",         800,  1_500),
-        ("Soyabean Oil 5L",         750,    950),
+        ("Organic Coffee Beans 1lb", 12, 24),
+        ("Extra Virgin Olive Oil 1L", 10, 22),
+        ("Pasta Variety Pack",        8, 18),
+        ("Protein Bars Box",         14, 32),
+        ("Sparkling Water 12-pack",   6, 16),
     ],
     "home-appliances": [
-        ("Ceiling Fan",           3_500,  7_000),
-        ("Rice Cooker 1.8L",      1_800,  3_800),
-        ("Blender 600W",          1_200,  2_500),
-        ("Electric Iron",           600,  1_300),
-        ("Water Purifier",        4_500, 10_000),
+        ("Air Fryer 5qt",          69, 179),
+        ("Robot Vacuum",          149, 399),
+        ("Blender",                39, 119),
+        ("Espresso Machine",      129, 299),
+        ("Compact Microwave",      89, 229),
     ],
     "beauty": [
-        ("Herbal Soap Pack (6)",    120,    220),
-        ("Shampoo 400ml",           150,    280),
-        ("Perfume EDP 50ml",        400,  1_400),
-        ("Coconut Oil 200ml",        80,    160),
-        ("Sunscreen SPF50",         200,    500),
+        ("Hydrating Face Serum",   18,  48),
+        ("Moisturizer",            15,  38),
+        ("Eau de Parfum 50ml",     35, 120),
+        ("Shampoo 500ml",          10,  28),
+        ("Sunscreen SPF50",        12,  32),
     ],
     "books": [
-        ("SSC Math Guide",          150,    260),
-        ("Bangla Novel",            120,    320),
-        ("HSC Physics",             200,    300),
-        ("Islamic Books Set",       350,    700),
-        ("English Grammar (Advanced)", 200, 420),
+        ("Business Strategy Hardcover", 18, 42),
+        ("Mystery Novel Paperback",    12, 24),
+        ("Productivity Journal",       14, 32),
+        ("Cookbook Collection",        20, 44),
+        ("Programming Handbook",       24, 60),
     ],
     "sports": [
-        ("Cricket Bat (Kashmir Willow)", 800, 2_200),
-        ("Football Size 5",         400,    950),
-        ("Badminton Racket Set",    350,    800),
-        ("Gym Gloves",              200,    550),
-        ("Yoga Mat",                350,    750),
+        ("Yoga Mat",                18,  45),
+        ("Resistance Bands Set",    15,  40),
+        ("Insulated Water Bottle",  14,  32),
+        ("Adjustable Dumbbell",     80, 220),
+        ("Fitness Tracker",         49, 149),
     ],
     "mobile": [
-        ("Symphony Z50",          8_000, 11_000),
-        ("Walton Primo",          7_500, 10_000),
-        ("Samsung Galaxy A14",   18_000, 23_000),
-        ("Xiaomi Redmi 12",      20_000, 26_000),
-        ("Realme C55",           16_000, 21_000),
+        ("iPhone 15",             699, 999),
+        ("Samsung Galaxy S24",    649, 949),
+        ("Google Pixel 8",        549, 799),
+        ("OnePlus 12",            599, 899),
+        ("Moto G Power",          199, 329),
     ],
     "accessories": [
-        ("Screen Guard Pack (3)",    80,    160),
-        ("Phone Case Silicone",      60,    130),
-        ("Wired Earphone",          150,    450),
-        ("Memory Card 64GB",        500,    850),
-        ("OTG Adapter",              80,    160),
+        ("Screen Protector 2-pack", 12,  28),
+        ("Phone Case",              10,  35),
+        ("USB-C Charging Cable",     9,  24),
+        ("Portable SSD 1TB",        79, 149),
+        ("Wireless Mouse",          19,  59),
     ],
     "furniture": [
-        ("Plastic Chair Set (4)",  1_200,  2_200),
-        ("Study Table",           3_000,  7_000),
-        ("Wooden Wardrobe",      12_000, 26_000),
-        ("Steel Single Bed",      5_000, 10_000),
-        ("Bookshelf 3-Tier",      2_500,  5_000),
+        ("Ergonomic Office Chair", 129, 349),
+        ("Standing Desk",          199, 499),
+        ("Bookshelf",               59, 179),
+        ("Coffee Table",            69, 199),
+        ("Nightstand Set",          79, 189),
     ],
 }
 
@@ -147,8 +146,8 @@ def _random_dt(days_ago_min: int = 0, days_ago_max: int = 365) -> datetime:
 
 
 def _make_user(user_id: int) -> dict:
-    first = random.choice(_BD_FIRST_NAMES)
-    last  = random.choice(_BD_LAST_NAMES)
+    first = random.choice(_FIRST_NAMES)
+    last  = random.choice(_LAST_NAMES)
     domain = random.choice(_EMAIL_DOMAINS)
     email = f"{first.lower()}.{last.lower()}{random.randint(1, 999)}@{domain}"
     signup = _random_dt(days_ago_min=30, days_ago_max=1_460)
@@ -157,18 +156,18 @@ def _make_user(user_id: int) -> dict:
         "firstName": first,
         "lastName":  last,
         "email":     email,
-        "address":   {"city": random.choice(_BD_CITIES)},
+        "address":   {"city": random.choice(_CITIES)},
         "createdAt": signup.isoformat(),
     }
 
 
 def _make_cart(cart_id: int, user_id: int) -> dict:
-    n_cats = random.randint(1, min(4, len(_BD_PRODUCTS)))
-    chosen_cats = random.sample(list(_BD_PRODUCTS.keys()), n_cats)
+    n_cats = random.randint(1, min(4, len(_PRODUCTS)))
+    chosen_cats = random.sample(list(_PRODUCTS.keys()), n_cats)
 
     products = []
     for cat in chosen_cats:
-        name, lo, hi = random.choice(_BD_PRODUCTS[cat])
+        name, lo, hi = random.choice(_PRODUCTS[cat])
         price    = round(random.uniform(lo, hi), 2)
         qty      = random.randint(1, 5)
         discount = round(random.uniform(0.0, 0.25), 2)   # 0–25 %
@@ -201,21 +200,21 @@ def _make_cart(cart_id: int, user_id: int) -> dict:
 def synthesize_orders(
     real_carts: list,
     real_users: list,
-    num_records: int = 500,
+    num_records: int = 10_000,
 ) -> tuple[list, list]:
     """
-    Synthesise *num_records* BDT orders.
+    Synthesise *num_records* generic e-commerce orders.
 
     Strategy:
       • Use real API users as name/email seeds where possible.
-      • Always generate Bangladeshi city, payment method, products and prices.
+      • Always generate generic city, payment method, products, and pricing.
       • Supplement with fully synthetic users when the API pool is exhausted.
 
     Returns:
         (carts_list, users_list)
     """
     logger.info(
-        f"Synthesising {num_records} BDT orders  "
+        f"Synthesising {num_records} generic e-commerce orders  "
         f"(API seed: {len(real_carts)} carts, {len(real_users)} users)"
     )
 
@@ -234,10 +233,10 @@ def synthesize_orders(
             if uid not in synthesised_users:
                 synthesised_users[uid] = {
                     "id":        uid,
-                    "firstName": ru.get("firstName", random.choice(_BD_FIRST_NAMES)),
-                    "lastName":  ru.get("lastName",  random.choice(_BD_LAST_NAMES)),
+                    "firstName": ru.get("firstName", random.choice(_FIRST_NAMES)),
+                    "lastName":  ru.get("lastName",  random.choice(_LAST_NAMES)),
                     "email":     ru.get("email",     f"user{uid}@gmail.com"),
-                    "address":   {"city": random.choice(_BD_CITIES)},
+                    "address":   {"city": random.choice(_CITIES)},
                     "createdAt": ru.get("createdAt", _random_dt(30, 1_460).isoformat()),
                 }
         else:

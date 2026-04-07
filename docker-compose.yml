@@ -1,7 +1,7 @@
 version: "3.9"
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  BDT ETL Pipeline — PostgreSQL via Docker
+#  E-Commerce ETL Pipeline — PostgreSQL via Docker
 #
 #  Start:   docker compose up -d
 #  Stop:    docker compose down
@@ -12,7 +12,7 @@ version: "3.9"
 services:
   db:
     image: postgres:16-alpine
-    container_name: bdt_etl_postgres
+    container_name: ecommerce_etl_postgres
     restart: unless-stopped
 
     environment:

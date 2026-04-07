@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 """
-BDT E-Commerce ETL Pipeline — Orchestrator
-===========================================
+Generic E-Commerce ETL Pipeline — Orchestrator
+==============================================
 Single entry point. Run:
     python orchestrator.py
 
 Pipeline stages:
     1. Extract   — fetch carts & users from dummyjson.com (with retries)
-    2. Synthesise — generate BDT-priced Bangladeshi e-commerce orders
+    2. Synthesise — generate large-scale generic e-commerce orders
     3. Enrich    — merge cart + user data, compute derived fields
     4. Transform — build customer_analytics & order_analytics DataFrames
     5. Write     — persist processed CSVs to data/processed/
@@ -48,7 +48,7 @@ _DIVIDER = "═" * 62
 
 def run() -> None:
     logger.info(_DIVIDER)
-    logger.info("      BDT E-Commerce ETL Pipeline  —  Orchestrator")
+    logger.info("      Generic E-Commerce ETL Pipeline  —  Orchestrator")
     logger.info(_DIVIDER)
 
     # ── 0. Setup directories ─────────────────────────────────────────────────
@@ -66,8 +66,8 @@ def run() -> None:
     write_raw_json(raw_users, "raw_users.json")
 
     # ── 2. Synthesise ────────────────────────────────────────────────────────
-    num_records: int = int(get("processing.num_synthetic_records", 500))
-    logger.info(f"[STEP 2/5]  Synthesising {num_records} BDT orders…")
+    num_records: int = int(get("processing.num_synthetic_records", 10_000))
+    logger.info(f"[STEP 2/5]  Synthesising {num_records} generic orders…")
     carts, users = synthesize_orders(raw_carts, raw_users, num_records=num_records)
     write_raw_json(carts, "synthesised_carts.json")
     write_raw_json(users, "synthesised_users.json")

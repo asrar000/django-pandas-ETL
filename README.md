@@ -1,6 +1,6 @@
-# 🛒 BDT E-Commerce ETL Pipeline
+# 🛒 Generic E-Commerce ETL Pipeline
 
-A production-structured Django + Pandas + PostgreSQL ETL pipeline that extracts e-commerce data, synthesises realistic **Bangladeshi Taka (BDT)** orders, enriches and transforms them into two analytical tables, and loads the results into PostgreSQL.
+A production-structured Django + Pandas + PostgreSQL ETL pipeline that extracts seed e-commerce data, synthesises realistic **generic e-commerce** orders at scale, enriches and transforms them into two analytical tables, and loads the results into PostgreSQL.
 
 ---
 
@@ -10,7 +10,7 @@ A production-structured Django + Pandas + PostgreSQL ETL pipeline that extracts 
 orchestrator.py          ← single entry point (Step 1–5)
 │
 ├── extractor/           ← Step 1 : HTTP fetch with retries & exponential back-off
-├── processing/          ← Step 2 : BDT data synthesis  |  Step 3 : enrichment
+├── processing/          ← Step 2 : synthetic order generation  |  Step 3 : enrichment
 ├── transformation/      ← Step 4 : customer_analytics & order_analytics builders
 ├── utils/               ← paths · logger · writer  (shared, imported everywhere)
 ├── services/            ← Step 5 (DB) : ORM upsert helpers
@@ -68,7 +68,7 @@ python orchestrator.py
 
 **What this does:**
 1. Fetches raw carts & users from `https://dummyjson.com` (with retry + back-off)
-2. Synthesises **500 BDT orders** with Bangladeshi names, cities, products & prices
+2. Synthesises **10,000 generic orders** with globally recognizable names, cities, products, payment methods, and pricing
 3. Enriches every order (gross/net/discount/complexity/dominant-category …)
 4. Transforms into `customer_analytics` and `order_analytics` DataFrames
 5. Writes `data/processed/customer_analytics.csv` and `data/processed/order_analytics.csv`
@@ -101,8 +101,9 @@ api:
   backoff_factor: 2       # wait = 2^attempt seconds
 
 processing:
-  num_synthetic_records: 500   # change this to generate more/fewer orders
-  currency: "BDT"
+  num_synthetic_records: 10000   # change this to generate more/fewer orders
+  currency: "USD"
+  currency_symbol: "$"
 
 database:
   host: "localhost"
@@ -129,10 +130,10 @@ db_host = get("database.host")   # → "localhost"
 | `full_name` | VARCHAR | first + last name |
 | `email` | VARCHAR | lowercased |
 | `email_domain` | VARCHAR | extracted from email |
-| `city` | VARCHAR | Bangladeshi city |
+| `city` | VARCHAR | customer city |
 | `customer_tenure_days` | INT | today − signup_date |
 | `total_orders` | INT | distinct order count |
-| `total_spent` | DECIMAL | Σ final_amount (BDT) |
+| `total_spent` | DECIMAL | Σ final_amount (default: USD) |
 | `avg_order_value` | DECIMAL | total_spent / total_orders |
 | `lifetime_value_score` | DECIMAL | weighted LTV (0–100) |
 | `customer_segment` | VARCHAR | High / Medium / Low |
@@ -145,7 +146,7 @@ db_host = get("database.host")   # → "localhost"
 | `order_date` | DATE | extracted from timestamp |
 | `order_hour` | INT | 0–23 |
 | `total_items` | INT | Σ quantities |
-| `gross_amount` | DECIMAL | Σ price×qty (BDT) |
+| `gross_amount` | DECIMAL | Σ price×qty (default: USD) |
 | `total_discount_amount` | DECIMAL | Σ discounts |
 | `net_amount` | DECIMAL | gross − discount |
 | `shipping_cost` | DECIMAL | courier fee |
@@ -153,8 +154,8 @@ db_host = get("database.host")   # → "localhost"
 | `discount_ratio` | DECIMAL | discount / gross |
 | `order_complexity_score` | INT | (unique_cats×2) + items |
 | `dominant_category` | VARCHAR | highest-spend category |
-| `payment_method` | VARCHAR | bKash, Nagad, COD… |
-| `currency` | VARCHAR | always BDT |
+| `payment_method` | VARCHAR | Credit Card, PayPal, Apple Pay… |
+| `currency` | VARCHAR | defaults to USD |
 
 ---
 
@@ -208,14 +209,14 @@ docker compose down -v        # stop AND delete all data
 ## 📁 Project Layout
 
 ```
-bdt_etl/
+ecommerce_etl/
 ├── config/
 │   ├── config.yml            ← all config values
 │   └── loader.py             ← dot-notation config accessor
 ├── extractor/
 │   └── api_extractor.py      ← HTTP + retry/backoff
 ├── processing/
-│   ├── synthesizer.py        ← BDT data generator
+│   ├── synthesizer.py        ← generic synthetic data generator
 │   └── enrichment.py        ← derived field computation
 ├── transformation/
 │   ├── customer_transformer.py
@@ -253,7 +254,7 @@ bdt_etl/
 | Problem | Fix |
 |---------|-----|
 | `connection refused` on port 5432 | Run `docker compose up -d` and wait 15 s |
-| `ModuleNotFoundError: config` | Make sure you activated the venv and are in the `bdt_etl/` directory |
+| `ModuleNotFoundError: config` | Make sure you activated the venv and are in the project root directory |
 | `FileNotFoundError: customer_analytics.csv` | Run `python orchestrator.py` before the dump command |
 | API fetch fails (network issue) | The pipeline auto-falls back to fully synthetic data — no action needed |
 | `django.db.utils.OperationalError` | Check `config/config.yml` DB credentials match `docker-compose.yml` |

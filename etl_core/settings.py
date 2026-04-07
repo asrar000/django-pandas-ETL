@@ -11,7 +11,7 @@ if str(BASE_DIR) not in sys.path:
 
 from config.loader import get  # noqa: E402  (import after path manipulation)
 
-SECRET_KEY = "django-insecure-bdt-etl-pipeline-secret-change-in-production-2024"
+SECRET_KEY = "django-insecure-ecommerce-etl-pipeline-secret-change-in-production"
 DEBUG       = True
 ALLOWED_HOSTS = ["*"]
 
@@ -68,6 +68,6 @@ TEMPLATES = [
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 STATIC_URL         = "/static/"
 LANGUAGE_CODE      = "en-us"
-TIME_ZONE          = "Asia/Dhaka"
+TIME_ZONE          = "UTC"
 USE_I18N           = True
 USE_TZ             = True

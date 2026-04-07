@@ -20,7 +20,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options) -> None:
         self.stdout.write(self.style.MIGRATE_HEADING(
             "\n╔══════════════════════════════════╗\n"
-            "║   PostgreSQL Dump — BDT ETL      ║\n"
+            "║  PostgreSQL Dump — E-Commerce    ║\n"
             "╚══════════════════════════════════╝\n"
         ))
 

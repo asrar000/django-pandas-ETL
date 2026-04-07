@@ -46,7 +46,7 @@ class Migration(migrations.Migration):
                 ("dominant_category",     models.CharField(max_length=100)),
                 ("payment_method",        models.CharField(max_length=50)),
                 ("shipping_provider",     models.CharField(max_length=100)),
-                ("currency",              models.CharField(default="BDT", max_length=10)),
+                ("currency",              models.CharField(default="USD", max_length=10)),
                 ("created_at",            models.DateTimeField(auto_now_add=True)),
                 ("updated_at",            models.DateTimeField(auto_now=True)),
             ],

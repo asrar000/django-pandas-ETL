@@ -3,6 +3,9 @@ Django ORM models for the two analytics tables.
 Table names are explicit so they match the ETL output.
 """
 from django.db import models
+from config.loader import get
+
+_CURRENCY_SYMBOL = get("processing.currency_symbol", "$")
 
 
 class CustomerAnalytics(models.Model):
@@ -27,7 +30,7 @@ class CustomerAnalytics(models.Model):
         verbose_name_plural = "Customer Analytics"
 
     def __str__(self) -> str:
-        return f"{self.full_name} | {self.customer_segment} | ৳{self.total_spent}"
+        return f"{self.full_name} | {self.customer_segment} | {_CURRENCY_SYMBOL}{self.total_spent}"
 
 
 class OrderAnalytics(models.Model):
@@ -46,7 +49,7 @@ class OrderAnalytics(models.Model):
     dominant_category      = models.CharField(max_length=100)
     payment_method         = models.CharField(max_length=50)
     shipping_provider      = models.CharField(max_length=100)
-    currency               = models.CharField(max_length=10, default="BDT")
+    currency               = models.CharField(max_length=10, default="USD")
     created_at             = models.DateTimeField(auto_now_add=True)
     updated_at             = models.DateTimeField(auto_now=True)
 
@@ -57,4 +60,4 @@ class OrderAnalytics(models.Model):
         verbose_name_plural = "Order Analytics"
 
     def __str__(self) -> str:
-        return f"Order {self.order_id[:8]}… | ৳{self.final_amount} | {self.dominant_category}"
+        return f"Order {self.order_id[:8]}… | {_CURRENCY_SYMBOL}{self.final_amount} | {self.dominant_category}"
