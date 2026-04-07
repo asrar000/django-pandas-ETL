@@ -6,6 +6,7 @@ import pandas as pd
 from django.db import transaction
 from django.utils import timezone
 
+from pipeline.models import CustomerAnalytics, OrderAnalytics
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -36,8 +37,6 @@ def load_customer_analytics(df: pd.DataFrame) -> tuple[int, int]:
     Upsert all rows in *df* into the CustomerAnalytics model.
     Unique key: customer_id.
     """
-    from pipeline.models import CustomerAnalytics  # deferred import avoids circular deps
-
     logger.info(f"Loading {len(df)} customer rows → DB…")
     records: list[dict] = df.to_dict(orient="records")
 
@@ -58,8 +57,6 @@ def load_order_analytics(df: pd.DataFrame) -> tuple[int, int]:
     Upsert all rows in *df* into the OrderAnalytics model.
     Unique key: order_id.
     """
-    from pipeline.models import OrderAnalytics
-
     logger.info(f"Loading {len(df)} order rows → DB…")
     records: list[dict] = df.to_dict(orient="records")
 
