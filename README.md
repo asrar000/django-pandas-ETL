@@ -19,8 +19,7 @@ pipeline/management/commands/etl_postgres.py  ← single entry point
 │
 ├── pipeline/            ← Django app : models · admin · management command
 │   └── management/commands/
-│       ├── etl_postgres.py
-│       └── dump_to_postgres.py
+│       └── etl_postgres.py
 │
 ├── etl_core/            ← Django project : settings · urls · wsgi
 ├── config/              ← config.yml  +  loader.py
@@ -82,21 +81,6 @@ python manage.py etl_postgres
 6. Creates or replaces the Iceberg tables `local.analytics.customer_analytics` and `local.analytics.order_analytics`
 
 Logs stream to the console **and** `logs/etl_pipeline.log`.
-
----
-
-### Optional Command — Reload existing processed CSVs into PostgreSQL only
-
-```bash
-python manage.py dump_to_postgres
-```
-
-**What this does:**
-- Reads the two processed CSVs
-- Upserts every row into PostgreSQL using Django ORM (`update_or_create`)
-- Safe to rerun against the same processed CSVs — matching `customer_id` and `order_id` rows are updated instead of duplicated
-- If you run `python manage.py etl_postgres` again first, freshly synthesised orders get new UUIDs, so new `order_analytics` rows will be inserted
-- This command only reloads PostgreSQL; Iceberg is produced by `python manage.py etl_postgres`
 
 ---
 
@@ -290,8 +274,7 @@ ecommerce_etl/
 │   ├── models.py             ← CustomerAnalytics, OrderAnalytics
 │   ├── admin.py
 │   └── management/commands/
-│       ├── etl_postgres.py
-│       └── dump_to_postgres.py
+│       └── etl_postgres.py
 ├── data/
 │   ├── raw/
 │   ├── processed/
