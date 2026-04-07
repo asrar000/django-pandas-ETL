@@ -1,28 +1,20 @@
 """
-Enrichment — merges cart + user data and derives all computed fields.
-Called once per order; all derived-field logic lives here.
+Enrichment — merges cart + user data and derives only the fields required by
+the downstream analytics tables.
 """
 from datetime import datetime
 
-from config.loader import get
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-_CURRENCY: str = get("processing.currency", "USD")
 
 
 # ── Per-order enrichment ──────────────────────────────────────────────────────
 
 def enrich_order(cart: dict, user: dict) -> dict:
     """
-    Merge one cart with its owning user and compute all derived fields.
-
-    Derived fields produced here (consumed downstream by transformers):
-      gross_amount, total_discount_amount, net_amount, final_amount,
-      discount_ratio, total_items, order_complexity_score, dominant_category,
-      order_date, order_hour, customer_tenure_days (partial — needs today's date),
-      email (lowercased), email_domain.
+    Merge one cart with its owning user and compute only the downstream fields
+    needed by the analytics transformers.
     """
     products = cart.get("products", [])
 
@@ -35,21 +27,6 @@ def enrich_order(cart: dict, user: dict) -> dict:
     net      = gross - disc
     shipping = float(cart.get("shippingCost", 0))
     final    = net + shipping
-
-    # ── Item & category aggregates ────────────────────────────────────────────
-    total_items  = sum(p["quantity"] for p in products)
-    unique_cats  = list({p["category"] for p in products})
-
-    cat_spend: dict[str, float] = {}
-    for p in products:
-        cat = p["category"]
-        cat_spend[cat] = cat_spend.get(cat, 0.0) + (
-            p["price"] * p["quantity"] * (1 - p["discountPercentage"] / 100.0)
-        )
-    dominant_cat = max(cat_spend, key=cat_spend.get) if cat_spend else "unknown"
-
-    # order_complexity_score = (unique product categories × 2) + total items
-    complexity = (len(unique_cats) * 2) + total_items
 
     discount_ratio = round(disc / gross, 4) if gross > 0 else 0.0
 
@@ -69,9 +46,9 @@ def enrich_order(cart: dict, user: dict) -> dict:
     # ── Email enrichment ──────────────────────────────────────────────────────
     email_raw: str    = user.get("email", "")
     email_clean: str  = email_raw.strip().lower()
-    email_domain: str = email_clean.split("@")[-1] if "@" in email_clean else ""
 
     address = user.get("address", {})
+    total_items = sum(p["quantity"] for p in products)
 
     return {
         # Identifiers
@@ -81,7 +58,6 @@ def enrich_order(cart: dict, user: dict) -> dict:
         "first_name":          user.get("firstName", ""),
         "last_name":           user.get("lastName", ""),
         "email":               email_clean,
-        "email_domain":        email_domain,
         "city":                address.get("city", "Unknown"),
         "signup_date":         signup_dt.date().isoformat(),
         # Order temporal
@@ -93,18 +69,13 @@ def enrich_order(cart: dict, user: dict) -> dict:
         "payment_method":      cart.get("paymentMethod", ""),
         "shipping_provider":   cart.get("shippingProvider", ""),
         # Derived monetary
+        "total_items":               total_items,
         "gross_amount":              round(gross, 2),
         "total_discount_amount":     round(disc,  2),
         "net_amount":                round(net,   2),
         "shipping_cost":             round(shipping, 2),
         "final_amount":              round(final, 2),
         "discount_ratio":            discount_ratio,
-        # Derived order metrics
-        "total_items":               total_items,
-        "order_complexity_score":    complexity,
-        "dominant_category":         dominant_cat,
-        "unique_categories":         unique_cats,
-        "currency":                  _CURRENCY,
     }
 
 

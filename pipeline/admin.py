@@ -13,8 +13,8 @@ class CustomerAnalyticsAdmin(admin.ModelAdmin):
 
 @admin.register(OrderAnalytics)
 class OrderAnalyticsAdmin(admin.ModelAdmin):
-    list_display  = ("order_id", "customer_id", "order_date", "final_amount",
-                     "dominant_category", "payment_method", "currency")
-    list_filter   = ("dominant_category", "payment_method", "currency")
+    list_display  = ("order_id", "customer_id", "order_timestamp", "order_date", "final_amount",
+                     "payment_method", "shipping_provider")
+    list_filter   = ("payment_method", "shipping_provider")
     search_fields = ("order_id",)
-    ordering      = ("-order_date",)
+    ordering      = ("-order_timestamp",)

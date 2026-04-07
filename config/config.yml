@@ -9,7 +9,6 @@ api:
 
 processing:
   num_synthetic_records: 10000
-  currency: "USD"
   currency_symbol: "$"
 
 database:

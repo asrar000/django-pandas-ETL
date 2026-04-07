@@ -4,6 +4,7 @@ All DB interaction in the pipeline goes through this module.
 """
 import pandas as pd
 from django.db import transaction
+from django.utils import timezone
 
 from utils.logger import get_logger
 
@@ -64,14 +65,22 @@ def load_order_analytics(df: pd.DataFrame) -> tuple[int, int]:
     for r in records:
         r["customer_id"]          = int(r["customer_id"])
         r["order_hour"]           = int(r["order_hour"])
-        r["total_items"]          = int(r["total_items"])
-        r["order_complexity_score"]= int(r["order_complexity_score"])
         r["gross_amount"]         = float(r["gross_amount"])
         r["total_discount_amount"]= float(r["total_discount_amount"])
         r["net_amount"]           = float(r["net_amount"])
         r["shipping_cost"]        = float(r["shipping_cost"])
         r["final_amount"]         = float(r["final_amount"])
+        r["total_items"]          = int(r["total_items"])
         r["discount_ratio"]       = float(r["discount_ratio"])
+        order_timestamp = pd.to_datetime(r.get("order_timestamp"), errors="coerce")
+        if not pd.isna(order_timestamp):
+            order_timestamp = order_timestamp.to_pydatetime()
+            if timezone.is_naive(order_timestamp):
+                order_timestamp = timezone.make_aware(
+                    order_timestamp,
+                    timezone.get_current_timezone(),
+                )
+            r["order_timestamp"] = order_timestamp
         # Pandas Timestamp → Python date (Django DateField)
         if hasattr(r.get("order_date"), "date"):
             r["order_date"] = r["order_date"].date()

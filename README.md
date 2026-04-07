@@ -70,7 +70,7 @@ python orchestrator.py
 **What this does:**
 1. Fetches raw carts & users from `https://dummyjson.com` (with retry + back-off)
 2. Synthesises **10,000 generic orders** with globally recognizable names, cities, products, payment methods, and pricing
-3. Enriches every order (gross/net/discount/complexity/dominant-category …)
+3. Enriches every order with only the required totals, discounts, timestamps, and customer/order fields
 4. Transforms into `customer_analytics` and `order_analytics` DataFrames
 5. Writes `data/processed/customer_analytics.csv` and `data/processed/order_analytics.csv`
 
@@ -103,7 +103,6 @@ api:
 
 processing:
   num_synthetic_records: 10000   # change this to generate more/fewer orders
-  currency: "USD"
   currency_symbol: "$"
 
 database:
@@ -130,7 +129,6 @@ db_host = get("database.host")   # → "localhost"
 | `customer_id` | INT (unique) | Source user ID |
 | `full_name` | VARCHAR | first + last name |
 | `email` | VARCHAR | lowercased |
-| `email_domain` | VARCHAR | extracted from email |
 | `city` | VARCHAR | customer city |
 | `customer_tenure_days` | INT | today − signup_date |
 | `total_orders` | INT | distinct order count |
@@ -144,19 +142,18 @@ db_host = get("database.host")   # → "localhost"
 |--------|------|-------------|
 | `order_id` | VARCHAR (unique) | UUID |
 | `customer_id` | INT | FK reference |
+| `order_timestamp` | TIMESTAMP | original order timestamp from the source payload |
 | `order_date` | DATE | extracted from timestamp |
 | `order_hour` | INT | 0–23 |
-| `total_items` | INT | Σ quantities |
 | `gross_amount` | DECIMAL | Σ price×qty (default: USD) |
 | `total_discount_amount` | DECIMAL | Σ discounts |
 | `net_amount` | DECIMAL | gross − discount |
 | `shipping_cost` | DECIMAL | courier fee |
 | `final_amount` | DECIMAL | net + shipping |
+| `total_items` | INT | Σ quantities |
 | `discount_ratio` | DECIMAL | discount / gross |
-| `order_complexity_score` | INT | (unique_cats×2) + items |
-| `dominant_category` | VARCHAR | highest-spend category |
 | `payment_method` | VARCHAR | Credit Card, PayPal, Apple Pay… |
-| `currency` | VARCHAR | defaults to USD |
+| `shipping_provider` | VARCHAR | UPS, FedEx, DHL… |
 
 ---
 
@@ -172,9 +169,9 @@ FROM customer_analytics
 GROUP BY customer_segment
 ORDER BY avg_spent DESC;
 
-SELECT dominant_category, COUNT(*) AS orders, ROUND(SUM(final_amount)) AS revenue
+SELECT payment_method, COUNT(*) AS orders, ROUND(SUM(final_amount)) AS revenue
 FROM order_analytics
-GROUP BY dominant_category
+GROUP BY payment_method
 ORDER BY revenue DESC;
 ```
 

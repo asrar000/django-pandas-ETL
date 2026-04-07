@@ -41,7 +41,7 @@ def build_customer_analytics(enriched_orders: list) -> pd.DataFrame:
     Aggregate enriched orders into customer_analytics table.
 
     Columns produced:
-        customer_id, full_name, email, email_domain, city,
+        customer_id, full_name, email, city,
         customer_tenure_days, total_orders, total_spent,
         avg_order_value, lifetime_value_score, customer_segment
     """
@@ -56,7 +56,6 @@ def build_customer_analytics(enriched_orders: list) -> pd.DataFrame:
             first_name            =("first_name",    "first"),
             last_name             =("last_name",     "first"),
             email                 =("email",         "first"),
-            email_domain          =("email_domain",  "first"),
             city                  =("city",          "first"),
             signup_date           =("signup_date",   "first"),
             total_orders          =("order_id",      "nunique"),
@@ -83,7 +82,7 @@ def build_customer_analytics(enriched_orders: list) -> pd.DataFrame:
     agg["customer_segment"] = agg["lifetime_value_score"].apply(_customer_segment)
 
     final_cols = [
-        "customer_id", "full_name", "email", "email_domain", "city",
+        "customer_id", "full_name", "email", "city",
         "customer_tenure_days", "total_orders", "total_spent",
         "avg_order_value", "lifetime_value_score", "customer_segment",
     ]
