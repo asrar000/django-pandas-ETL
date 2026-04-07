@@ -17,6 +17,7 @@ def enrich_order(cart: dict, user: dict) -> dict:
     needed by the analytics transformers.
     """
     products = cart.get("products", [])
+    unique_product_ids = {p.get("id") for p in products if p.get("id") is not None}
 
     # ── Monetary aggregates ───────────────────────────────────────────────────
     gross = sum(p["price"] * p["quantity"] for p in products)
@@ -29,6 +30,20 @@ def enrich_order(cart: dict, user: dict) -> dict:
     final    = net + shipping
 
     discount_ratio = round(disc / gross, 4) if gross > 0 else 0.0
+    total_items = sum(p["quantity"] for p in products)
+    order_complexity_score = len(unique_product_ids) * 2 + total_items
+
+    category_totals: dict[str, float] = {}
+    for product in products:
+        category = str(product.get("category", "")).strip() or "Unknown"
+        category_totals[category] = category_totals.get(category, 0.0) + (
+            product["price"] * product["quantity"]
+        )
+    dominant_category = (
+        max(category_totals.items(), key=lambda item: (item[1], item[0]))[0]
+        if category_totals
+        else "Unknown"
+    )
 
     # ── Temporal fields ───────────────────────────────────────────────────────
     raw_ts: str = cart.get("orderTimestamp", datetime.now().isoformat())
@@ -46,9 +61,9 @@ def enrich_order(cart: dict, user: dict) -> dict:
     # ── Email enrichment ──────────────────────────────────────────────────────
     email_raw: str    = user.get("email", "")
     email_clean: str  = email_raw.strip().lower()
+    email_domain: str = email_clean.split("@", 1)[1] if "@" in email_clean else ""
 
     address = user.get("address", {})
-    total_items = sum(p["quantity"] for p in products)
 
     return {
         # Identifiers
@@ -58,6 +73,7 @@ def enrich_order(cart: dict, user: dict) -> dict:
         "first_name":          user.get("firstName", ""),
         "last_name":           user.get("lastName", ""),
         "email":               email_clean,
+        "email_domain":        email_domain,
         "city":                address.get("city", "Unknown"),
         "signup_date":         signup_dt.date().isoformat(),
         # Order temporal
@@ -76,6 +92,8 @@ def enrich_order(cart: dict, user: dict) -> dict:
         "shipping_cost":             round(shipping, 2),
         "final_amount":              round(final, 2),
         "discount_ratio":            discount_ratio,
+        "order_complexity_score":    order_complexity_score,
+        "dominant_category":         dominant_category,
     }
 
 

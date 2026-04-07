@@ -17,7 +17,8 @@ def build_order_analytics(enriched_orders: list) -> pd.DataFrame:
         order_id, customer_id, order_timestamp, order_date, order_hour,
         gross_amount, total_discount_amount,
         net_amount, shipping_cost, final_amount,
-        total_items, discount_ratio, payment_method, shipping_provider
+        total_items, discount_ratio, order_complexity_score,
+        dominant_category, payment_method, shipping_provider
     """
     logger.info("Building order_analytics…")
     df = pd.DataFrame(enriched_orders)
@@ -26,7 +27,8 @@ def build_order_analytics(enriched_orders: list) -> pd.DataFrame:
         "order_id", "customer_id", "order_timestamp", "order_date", "order_hour",
         "gross_amount", "total_discount_amount",
         "net_amount", "shipping_cost", "final_amount",
-        "total_items", "discount_ratio", "payment_method", "shipping_provider",
+        "total_items", "discount_ratio", "order_complexity_score",
+        "dominant_category", "payment_method", "shipping_provider",
     ]
     order_df = df[cols].copy()
 
@@ -41,6 +43,7 @@ def build_order_analytics(enriched_orders: list) -> pd.DataFrame:
     order_df["final_amount"]           = order_df["final_amount"].round(2)
     order_df["total_items"]            = order_df["total_items"].astype(int)
     order_df["discount_ratio"]         = order_df["discount_ratio"].round(4)
+    order_df["order_complexity_score"] = order_df["order_complexity_score"].astype(int)
 
     logger.info(f"order_analytics → {len(order_df)} rows")
     return order_df

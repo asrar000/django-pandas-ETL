@@ -70,7 +70,7 @@ python orchestrator.py
 **What this does:**
 1. Fetches raw carts & users from `https://dummyjson.com` (with retry + back-off)
 2. Synthesises **10,000 generic orders** with globally recognizable names, cities, products, payment methods, and pricing
-3. Enriches every order with only the required totals, discounts, timestamps, and customer/order fields
+3. Enriches every order with the required totals, discounts, timestamps, email domain, and order-complexity fields
 4. Transforms into `customer_analytics` and `order_analytics` DataFrames
 5. Writes `data/processed/customer_analytics.csv` and `data/processed/order_analytics.csv`
 
@@ -87,7 +87,8 @@ python manage.py dump_to_postgres
 **What this does:**
 - Reads the two processed CSVs
 - Upserts every row into PostgreSQL using Django ORM (`update_or_create`)
-- Safe to run multiple times — duplicate rows are updated, not duplicated
+- Safe to rerun against the same processed CSVs — matching `customer_id` and `order_id` rows are updated instead of duplicated
+- If you run `orchestrator.py` again first, freshly synthesised orders get new UUIDs, so new `order_analytics` rows will be inserted
 
 ---
 
@@ -129,6 +130,7 @@ db_host = get("database.host")   # → "localhost"
 | `customer_id` | INT (unique) | Source user ID |
 | `full_name` | VARCHAR | first + last name |
 | `email` | VARCHAR | lowercased |
+| `email_domain` | VARCHAR | extracted from normalized email |
 | `city` | VARCHAR | customer city |
 | `customer_tenure_days` | INT | today − signup_date |
 | `total_orders` | INT | distinct order count |
@@ -152,6 +154,8 @@ db_host = get("database.host")   # → "localhost"
 | `final_amount` | DECIMAL | net + shipping |
 | `total_items` | INT | Σ quantities |
 | `discount_ratio` | DECIMAL | discount / gross |
+| `order_complexity_score` | INT | (unique products × 2) + total_items |
+| `dominant_category` | VARCHAR | category with the highest gross contribution |
 | `payment_method` | VARCHAR | Credit Card, PayPal, Apple Pay… |
 | `shipping_provider` | VARCHAR | UPS, FedEx, DHL… |
 

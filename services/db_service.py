@@ -48,6 +48,7 @@ def load_customer_analytics(df: pd.DataFrame) -> tuple[int, int]:
         r["total_spent"]         = float(r["total_spent"])
         r["avg_order_value"]     = float(r["avg_order_value"])
         r["lifetime_value_score"]= float(r["lifetime_value_score"])
+        r["email_domain"]        = str(r.get("email_domain", ""))
 
     return _bulk_upsert(CustomerAnalytics, records, "customer_id")
 
@@ -72,6 +73,8 @@ def load_order_analytics(df: pd.DataFrame) -> tuple[int, int]:
         r["final_amount"]         = float(r["final_amount"])
         r["total_items"]          = int(r["total_items"])
         r["discount_ratio"]       = float(r["discount_ratio"])
+        r["order_complexity_score"] = int(r["order_complexity_score"])
+        r["dominant_category"]      = str(r.get("dominant_category", ""))
         order_timestamp = pd.to_datetime(r.get("order_timestamp"), errors="coerce")
         if not pd.isna(order_timestamp):
             order_timestamp = order_timestamp.to_pydatetime()
