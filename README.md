@@ -1,6 +1,7 @@
 # 🛒 Generic E-Commerce ETL Pipeline
 
 A production-structured Django ETL project with two parallel analytics paths from the same extracted seed data:
+
 - a Pandas path that writes processed CSVs and upserts PostgreSQL through Django ORM
 - a PySpark path that mirrors the same synthesize, enrich, and transform logic and writes Iceberg tables
 
@@ -35,12 +36,12 @@ pipeline/management/commands/etl_postgres.py  ← single entry point
 
 ## 📦 Prerequisites
 
-| Tool | Version |
-|------|---------|
-| Python | ≥ 3.11 |
-| Java | ≥ 17 |
+| Tool                    | Version            |
+| ----------------------- | ------------------ |
+| Python                  | ≥ 3.11             |
+| Java                    | ≥ 17               |
 | Docker + Docker Compose | any recent version |
-| pip | ≥ 23 |
+| pip                     | ≥ 23               |
 
 ---
 
@@ -73,6 +74,7 @@ python manage.py etl_postgres
 ```
 
 **What this does:**
+
 1. Fetches raw carts & users from `https://dummyjson.com` (with retry + back-off)
 2. Launches the existing Pandas branch for synthesize → enrich → transform → CSV → PostgreSQL
 3. Launches the parallel PySpark branch for synthesize → enrich → transform → Iceberg
@@ -91,11 +93,11 @@ All configuration lives in **`config/config.yml`** — no `.env` file needed.
 ```yaml
 api:
   base_url: "https://dummyjson.com"
-  max_retries: 5          # retry attempts before giving up
-  backoff_factor: 2       # wait = 2^attempt seconds
+  max_retries: 5 # retry attempts before giving up
+  backoff_factor: 2 # wait = 2^attempt seconds
 
 processing:
-  num_synthetic_records: 10000   # change this to generate more/fewer orders
+  num_synthetic_records: 10000 # change this to generate more/fewer orders
   currency_symbol: "$"
 
 spark:
@@ -120,6 +122,7 @@ database:
 The Spark branch writes to a local Hadoop Iceberg catalog rooted at `data/iceberg/warehouse`.
 
 Values are loaded lazily via `config/loader.py` using dot-notation:
+
 ```python
 from config.loader import get
 db_host = get("database.host")   # → "localhost"
@@ -130,49 +133,53 @@ db_host = get("database.host")   # → "localhost"
 ## 🗄️ Database Tables
 
 ### `customer_analytics`
-| Column | Type | Description |
-|--------|------|-------------|
-| `customer_id` | INT (unique) | Source user ID |
-| `full_name` | VARCHAR | first + last name |
-| `email` | VARCHAR | lowercased |
-| `email_domain` | VARCHAR | extracted from normalized email |
-| `city` | VARCHAR | customer city |
-| `customer_tenure_days` | INT | today − signup_date |
-| `total_orders` | INT | distinct order count |
-| `total_spent` | DECIMAL | Σ final_amount (default: USD) |
-| `avg_order_value` | DECIMAL | total_spent / total_orders |
-| `lifetime_value_score` | DECIMAL | weighted LTV (0–100) |
-| `customer_segment` | VARCHAR | High / Medium / Low |
+
+| Column                 | Type         | Description                     |
+| ---------------------- | ------------ | ------------------------------- |
+| `customer_id`          | INT (unique) | Source user ID                  |
+| `full_name`            | VARCHAR      | first + last name               |
+| `email`                | VARCHAR      | lowercased                      |
+| `email_domain`         | VARCHAR      | extracted from normalized email |
+| `city`                 | VARCHAR      | customer city                   |
+| `customer_tenure_days` | INT          | today − signup_date             |
+| `total_orders`         | INT          | distinct order count            |
+| `total_spent`          | DECIMAL      | Σ final_amount (default: USD)   |
+| `avg_order_value`      | DECIMAL      | total_spent / total_orders      |
+| `lifetime_value_score` | DECIMAL      | weighted LTV (0–100)            |
+| `customer_segment`     | VARCHAR      | High / Medium / Low             |
 
 ### `order_analytics`
-| Column | Type | Description |
-|--------|------|-------------|
-| `order_id` | VARCHAR (unique) | UUID |
-| `customer_id` | INT | FK reference |
-| `order_timestamp` | TIMESTAMP | original order timestamp from the source payload |
-| `order_date` | DATE | extracted from timestamp |
-| `order_hour` | INT | 0–23 |
-| `gross_amount` | DECIMAL | Σ price×qty (default: USD) |
-| `total_discount_amount` | DECIMAL | Σ discounts |
-| `net_amount` | DECIMAL | gross − discount |
-| `shipping_cost` | DECIMAL | courier fee |
-| `final_amount` | DECIMAL | net + shipping |
-| `total_items` | INT | Σ quantities |
-| `discount_ratio` | DECIMAL | discount / gross |
-| `order_complexity_score` | INT | (unique products × 2) + total_items |
-| `dominant_category` | VARCHAR | category with the highest gross contribution |
-| `payment_method` | VARCHAR | Credit Card, PayPal, Apple Pay… |
-| `shipping_provider` | VARCHAR | UPS, FedEx, DHL… |
+
+| Column                   | Type             | Description                                      |
+| ------------------------ | ---------------- | ------------------------------------------------ |
+| `order_id`               | VARCHAR (unique) | UUID                                             |
+| `customer_id`            | INT              | FK reference                                     |
+| `order_timestamp`        | TIMESTAMP        | original order timestamp from the source payload |
+| `order_date`             | DATE             | extracted from timestamp                         |
+| `order_hour`             | INT              | 0–23                                             |
+| `gross_amount`           | DECIMAL          | Σ price×qty (default: USD)                       |
+| `total_discount_amount`  | DECIMAL          | Σ discounts                                      |
+| `net_amount`             | DECIMAL          | gross − discount                                 |
+| `shipping_cost`          | DECIMAL          | courier fee                                      |
+| `final_amount`           | DECIMAL          | net + shipping                                   |
+| `total_items`            | INT              | Σ quantities                                     |
+| `discount_ratio`         | DECIMAL          | discount / gross                                 |
+| `order_complexity_score` | INT              | (unique products × 2) + total_items              |
+| `dominant_category`      | VARCHAR          | category with the highest gross contribution     |
+| `payment_method`         | VARCHAR          | Credit Card, PayPal, Apple Pay…                  |
+| `shipping_provider`      | VARCHAR          | UPS, FedEx, DHL…                                 |
 
 ---
 
 ## 🧊 Iceberg Tables
 
 The PySpark branch writes the same analytics datasets to Iceberg tables:
+
 - `local.analytics.customer_analytics`
 - `local.analytics.order_analytics`
 
 The local warehouse path is:
+
 - `data/iceberg/warehouse`
 
 Each `etl_postgres` run replaces the latest Iceberg table contents while keeping Iceberg table metadata and snapshots managed by the table format.
@@ -198,9 +205,11 @@ ORDER BY revenue DESC;
 ```
 
 Via Django shell:
+
 ```bash
 python manage.py shell
 ```
+
 ```python
 from pipeline.models import CustomerAnalytics, OrderAnalytics
 
@@ -213,9 +222,11 @@ OrderAnalytics.objects.aggregate(total=Sum("final_amount"))
 ```
 
 Via PySpark SQL:
+
 ```bash
 .venv/bin/python
 ```
+
 ```python
 from services.spark_service import build_spark_session
 
@@ -290,12 +301,12 @@ ecommerce_etl/
 
 ## 🛠 Troubleshooting
 
-| Problem | Fix |
-|---------|-----|
-| `connection refused` on port 5432 | Run `docker compose up -d` and wait 15 s |
-| `ModuleNotFoundError: config` | Make sure you activated the venv and are in the project root directory |
-| `FileNotFoundError: customer_analytics.csv` | Run `python manage.py etl_postgres` before the dump command |
-| API fetch fails (network issue) | The pipeline auto-falls back to fully synthetic data — no action needed |
-| `django.db.utils.OperationalError` | Check `config/config.yml` DB credentials match `docker-compose.yml` |
-| Spark/Iceberg startup is slow on the first run | Spark downloads the Iceberg runtime JAR once into `~/.ivy2`; later runs are faster |
-| Iceberg write fails before Spark starts | Make sure Java is installed and the machine can reach Maven Central for the Iceberg package download |
+| Problem                                        | Fix                                                                                                  |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `connection refused` on port 5432              | Run `docker compose up -d` and wait 15 s                                                             |
+| `ModuleNotFoundError: config`                  | Make sure you activated the venv and are in the project root directory                               |
+| `FileNotFoundError: customer_analytics.csv`    | Run `python manage.py etl_postgres` before the dump command                                          |
+| API fetch fails (network issue)                | The pipeline auto-falls back to fully synthetic data — no action needed                              |
+| `django.db.utils.OperationalError`             | Check `config/config.yml` DB credentials match `docker-compose.yml`                                  |
+| Spark/Iceberg startup is slow on the first run | Spark downloads the Iceberg runtime JAR once into `~/.ivy2`; later runs are faster                   |
+| Iceberg write fails before Spark starts        | Make sure Java is installed and the machine can reach Maven Central for the Iceberg package download |
