@@ -221,6 +221,14 @@ from django.db.models import Sum
 OrderAnalytics.objects.aggregate(total=Sum("final_amount"))
 ```
 
+To quickly view the Iceberg tables after ETL:
+
+```bash
+python utils/view_iceberg_tables.py
+```
+
+This script displays table schemas, sample rows, and row counts.
+
 Via PySpark SQL:
 
 ```bash
