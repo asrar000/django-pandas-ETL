@@ -70,17 +70,19 @@ python manage.py migrate
 ### Command 1 — Run the full ETL, PostgreSQL load, and Iceberg write
 
 ```bash
-python manage.py etl
+python manage.py etl                    # Run both branches
+python manage.py etl --pandas           # Run only Pandas → PostgreSQL branch
+python manage.py etl --pyspark          # Run only PySpark → Iceberg branch
 ```
 
 **What this does:**
 
 1. Fetches raw carts & users from `https://dummyjson.com` (with retry + back-off)
-2. Launches the existing Pandas branch for synthesize → enrich → transform → CSV → PostgreSQL
-3. Launches the parallel PySpark branch for synthesize → enrich → transform → Iceberg
-4. Writes `data/processed/customer_analytics.csv` and `data/processed/order_analytics.csv`
-5. Upserts both analytics datasets into PostgreSQL using Django ORM
-6. Creates or replaces the Iceberg tables `local.analytics.customer_analytics` and `local.analytics.order_analytics`
+2. Launches the Pandas branch for synthesize → enrich → transform → CSV → PostgreSQL (if --pandas or no flag)
+3. Launches the parallel PySpark branch for synthesize → enrich → transform → Iceberg (if --pyspark or no flag)
+4. Writes `data/processed/customer_analytics.csv` and `data/processed/order_analytics.csv` (Pandas branch)
+5. Upserts both analytics datasets into PostgreSQL using Django ORM (Pandas branch)
+6. Creates or replaces the Iceberg tables `local.analytics.customer_analytics` and `local.analytics.order_analytics` (PySpark branch)
 
 Logs stream to the console **and** `logs/etl_pipeline.log`.
 

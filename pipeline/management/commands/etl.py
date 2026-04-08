@@ -4,7 +4,9 @@ Runs the full ETL workflow, keeping the existing Pandas → PostgreSQL branch an
 adding a parallel PySpark → Iceberg branch from the same extracted seed data.
 
 Usage:
-    python manage.py etl
+    python manage.py etl                    # Run both branches
+    python manage.py etl --pandas           # Run only Pandas → PostgreSQL branch
+    python manage.py etl --pyspark          # Run only PySpark → Iceberg branch
 """
 from concurrent.futures import ThreadPoolExecutor
 
@@ -116,10 +118,34 @@ class Command(BaseCommand):
         "processed CSVs and PostgreSQL, and PySpark to Iceberg tables."
     )
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--pandas',
+            action='store_true',
+            help='Run only the Pandas → PostgreSQL branch',
+        )
+        parser.add_argument(
+            '--pyspark',
+            action='store_true',
+            help='Run only the PySpark → Iceberg branch',
+        )
+
     def handle(self, *args, **options) -> None:
-        logger.info(_DIVIDER)
-        logger.info("      Generic E-Commerce ETL Pipeline  —  Full Run")
-        logger.info(_DIVIDER)
+        run_pandas = options['pandas'] or not (options['pandas'] or options['pyspark'])
+        run_pyspark = options['pyspark'] or not (options['pandas'] or options['pyspark'])
+
+        if run_pandas and run_pyspark:
+            logger.info(_DIVIDER)
+            logger.info("      Generic E-Commerce ETL Pipeline  —  Full Run")
+            logger.info(_DIVIDER)
+        elif run_pandas:
+            logger.info(_DIVIDER)
+            logger.info("      Generic E-Commerce ETL Pipeline  —  Pandas Branch Only")
+            logger.info(_DIVIDER)
+        elif run_pyspark:
+            logger.info(_DIVIDER)
+            logger.info("      Generic E-Commerce ETL Pipeline  —  PySpark Branch Only")
+            logger.info(_DIVIDER)
 
         # ── 0. Setup directories ─────────────────────────────────────────────
         ensure_dirs()
@@ -135,34 +161,34 @@ class Command(BaseCommand):
         write_raw_json(raw_carts, "raw_carts.json")
         write_raw_json(raw_users, "raw_users.json")
 
-        # ── 2. Dual analytics branches ──────────────────────────────────────
-        logger.info(
-            "[STEP 2/2]  Running Pandas→PostgreSQL and PySpark→Iceberg branches…"
-        )
+        # ── 2. Analytics branches ───────────────────────────────────────────
+        if run_pandas and run_pyspark:
+            logger.info(
+                "[STEP 2/2]  Running Pandas→PostgreSQL and PySpark→Iceberg branches…"
+            )
+        elif run_pandas:
+            logger.info("[STEP 1/1]  Running Pandas→PostgreSQL branch…")
+        elif run_pyspark:
+            logger.info("[STEP 1/1]  Running PySpark→Iceberg branch…")
 
         pandas_result = None
         spark_result = None
         pandas_error = None
         spark_error = None
 
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            pandas_future = executor.submit(
-                _run_pandas_postgres_branch,
-                raw_carts,
-                raw_users,
-            )
+        if run_pandas:
+            try:
+                pandas_result = _run_pandas_postgres_branch(raw_carts, raw_users)
+            except Exception as exc:
+                pandas_error = exc
+                logger.exception("Pandas → PostgreSQL branch failed")
 
+        if run_pyspark:
             try:
                 spark_result = _run_spark_iceberg_branch(raw_carts, raw_users)
             except Exception as exc:
                 spark_error = exc
                 logger.exception("PySpark → Iceberg branch failed")
-
-            try:
-                pandas_result = pandas_future.result()
-            except Exception as exc:
-                pandas_error = exc
-                logger.exception("Pandas → PostgreSQL branch failed")
 
         if pandas_error or spark_error:
             messages = []
@@ -173,21 +199,28 @@ class Command(BaseCommand):
             raise CommandError(" | ".join(messages))
 
         logger.info(_DIVIDER)
-        logger.info(
-            "  ✓ PostgreSQL branch  →  "
-            f"{pandas_result['customer_rows']:>5} customer rows | "
-            f"{pandas_result['order_rows']:>5} order rows"
-        )
-        logger.info(
-            "    ORM upserts        →  "
-            f"customers {pandas_result['customer_created']} created / {pandas_result['customer_updated']} updated | "
-            f"orders {pandas_result['order_created']} created / {pandas_result['order_updated']} updated"
-        )
-        logger.info(
-            "  ✓ Iceberg branch     →  "
-            f"{spark_result['customer_rows']:>5} customer rows | "
-            f"{spark_result['order_rows']:>5} order rows"
-        )
+        if pandas_result:
+            logger.info(
+                "  ✓ PostgreSQL branch  →  "
+                f"{pandas_result['customer_rows']:>5} customer rows | "
+                f"{pandas_result['order_rows']:>5} order rows"
+            )
+            logger.info(
+                "    ORM upserts        →  "
+                f"customers {pandas_result['customer_created']} created / {pandas_result['customer_updated']} updated | "
+                f"orders {pandas_result['order_created']} created / {pandas_result['order_updated']} updated"
+            )
+        if spark_result:
+            logger.info(
+                "  ✓ Iceberg branch     →  "
+                f"{spark_result['customer_rows']:>5} customer rows | "
+                f"{spark_result['order_rows']:>5} order rows"
+            )
         logger.info(_DIVIDER)
-        logger.info("  Full ETL complete across PostgreSQL and Iceberg.")
+        if run_pandas and run_pyspark:
+            logger.info("  Full ETL complete across PostgreSQL and Iceberg.")
+        elif run_pandas:
+            logger.info("  Pandas ETL complete.")
+        elif run_pyspark:
+            logger.info("  PySpark ETL complete.")
         logger.info(_DIVIDER)
