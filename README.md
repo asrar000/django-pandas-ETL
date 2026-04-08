@@ -231,6 +231,14 @@ python manage.py view_iceberg_tables
 
 This command displays table schemas, sample rows, and row counts.
 
+To view the raw data files using PySpark:
+
+```bash
+jupyter notebook raw_viewer.ipynb
+```
+
+This notebook loads and displays the 4 raw JSON files with schemas and samples.
+
 Via PySpark SQL:
 
 ```bash
