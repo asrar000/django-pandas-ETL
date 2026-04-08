@@ -32,38 +32,3 @@ def write_processed_csv(df: pd.DataFrame, filename: str) -> Path:
     df.to_csv(path, index=False, encoding="utf-8")
     logger.info(f"Processed CSV written → {path}  ({len(df)} rows × {len(df.columns)} cols)")
     return path
-
-
-def write_processed_parquet(df: pd.DataFrame, filename: str) -> Path:
-    """Write a DataFrame to Parquet in the processed data directory."""
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    path = PROCESSED_DIR / filename
-    df.to_parquet(path, index=False)
-    logger.info(f"Processed Parquet written → {path}  ({len(df)} rows)")
-    return path
-
-
-# ── Read helpers ──────────────────────────────────────────────────────────────
-
-def read_processed_csv(filename: str) -> pd.DataFrame:
-    """Read a processed CSV back into a DataFrame."""
-    path = PROCESSED_DIR / filename
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Processed file not found: {path}\n"
-            "  → Run 'python manage.py etl_postgres' first."
-        )
-    df = pd.read_csv(path, encoding="utf-8")
-    logger.info(f"Read CSV ← {path}  ({len(df)} rows)")
-    return df
-
-
-def read_raw_json(filename: str) -> list:
-    """Read a raw JSON file back into a list."""
-    path = RAW_DIR / filename
-    if not path.exists():
-        raise FileNotFoundError(f"Raw file not found: {path}")
-    with open(path, "r", encoding="utf-8") as fh:
-        data = json.load(fh)
-    logger.info(f"Read JSON ← {path}  ({len(data)} records)")
-    return data
