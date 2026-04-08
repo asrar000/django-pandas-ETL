@@ -1,10 +1,10 @@
 """
-Management command: etl_postgres
+Management command: etl
 Runs the full ETL workflow, keeping the existing Pandas → PostgreSQL branch and
 adding a parallel PySpark → Iceberg branch from the same extracted seed data.
 
 Usage:
-    python manage.py etl_postgres
+    python manage.py etl
 """
 from concurrent.futures import ThreadPoolExecutor
 
@@ -27,7 +27,7 @@ from utils.logger import get_logger
 from utils.paths import ensure_dirs
 from utils.writer import write_processed_csv, write_raw_json
 
-logger = get_logger("pipeline.management.commands.etl_postgres")
+logger = get_logger("pipeline.management.commands.etl")
 
 _DIVIDER = "═" * 62
 

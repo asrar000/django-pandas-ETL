@@ -10,7 +10,7 @@ A production-structured Django ETL project with two parallel analytics paths fro
 ## 📐 Architecture Overview
 
 ```
-pipeline/management/commands/etl_postgres.py  ← single entry point
+pipeline/management/commands/etl.py  ← single entry point
 │
 ├── extractor/           ← Step 1 : shared HTTP extraction with retries/back-off
 ├── processing/          ← Pandas + PySpark synthesis and enrichment logic
@@ -20,7 +20,7 @@ pipeline/management/commands/etl_postgres.py  ← single entry point
 │
 ├── pipeline/            ← Django app : models · admin · management command
 │   └── management/commands/
-│       └── etl_postgres.py
+│       └── etl.py
 │
 ├── etl_core/            ← Django project : settings · urls · wsgi
 ├── config/              ← config.yml  +  loader.py
@@ -70,7 +70,7 @@ python manage.py migrate
 ### Command 1 — Run the full ETL, PostgreSQL load, and Iceberg write
 
 ```bash
-python manage.py etl_postgres
+python manage.py etl
 ```
 
 **What this does:**
@@ -182,7 +182,7 @@ The local warehouse path is:
 
 - `data/iceberg/warehouse`
 
-Each `etl_postgres` run replaces the latest Iceberg table contents while keeping Iceberg table metadata and snapshots managed by the table format.
+Each `etl` run replaces the latest Iceberg table contents while keeping Iceberg table metadata and snapshots managed by the table format.
 
 ---
 
@@ -293,7 +293,7 @@ ecommerce_etl/
 │   ├── models.py             ← CustomerAnalytics, OrderAnalytics
 │   ├── admin.py
 │   └── management/commands/
-│       └── etl_postgres.py
+│       └── etl.py
 ├── data/
 │   ├── raw/
 │   ├── processed/
@@ -313,7 +313,7 @@ ecommerce_etl/
 | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `connection refused` on port 5432              | Run `docker compose up -d` and wait 15 s                                                             |
 | `ModuleNotFoundError: config`                  | Make sure you activated the venv and are in the project root directory                               |
-| `FileNotFoundError: customer_analytics.csv`    | Run `python manage.py etl_postgres` before the dump command                                          |
+| `FileNotFoundError: customer_analytics.csv`    | Run `python manage.py etl` before the dump command                                          |
 | API fetch fails (network issue)                | The pipeline auto-falls back to fully synthetic data — no action needed                              |
 | `django.db.utils.OperationalError`             | Check `config/config.yml` DB credentials match `docker-compose.yml`                                  |
 | Spark/Iceberg startup is slow on the first run | Spark downloads the Iceberg runtime JAR once into `~/.ivy2`; later runs are faster                   |
