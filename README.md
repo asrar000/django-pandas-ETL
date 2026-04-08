@@ -223,6 +223,14 @@ from django.db.models import Sum
 OrderAnalytics.objects.aggregate(total=Sum("final_amount"))
 ```
 
+To view the PostgreSQL tables using Pandas:
+
+```bash
+jupyter notebook pandas_viewer.ipynb
+```
+
+This notebook connects to PostgreSQL and displays sample data and counts for the analytics tables.
+
 To view the Iceberg tables after ETL:
 
 ```bash
