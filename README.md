@@ -2,7 +2,7 @@
 
 A production-structured Django ETL project with two parallel analytics paths from the same extracted seed data:
 
-- a Pandas path that writes processed CSVs and upserts PostgreSQL through Django ORM
+- a Pandas path that writes processed CSVs, upserts PostgreSQL through Django ORM, and indexes OpenSearch
 - a PySpark path that mirrors the same synthesize, enrich, and transform logic and writes Iceberg tables
 
 ---
@@ -16,7 +16,7 @@ pipeline/management/commands/etl.py  ← single entry point
 ├── processing/          ← Pandas + PySpark synthesis and enrichment logic
 ├── transformation/      ← Pandas + PySpark analytics builders
 ├── utils/               ← paths · logger · writer  (shared, imported everywhere)
-├── services/            ← PostgreSQL ORM loaders + Spark/Iceberg helpers
+├── services/            ← PostgreSQL ORM loaders + OpenSearch + Spark/Iceberg helpers
 │
 ├── pipeline/            ← Django app : models · admin · management command
 │   └── management/commands/
@@ -38,51 +38,61 @@ pipeline/management/commands/etl.py  ← single entry point
 
 | Tool                    | Version            |
 | ----------------------- | ------------------ |
-| Python                  | ≥ 3.11             |
-| Java                    | ≥ 17               |
+| Python                  | 3.10 or 3.11       |
+| Java                    | ≥ 17 (PySpark / Iceberg branch only) |
 | Docker + Docker Compose | any recent version |
-| pip                     | ≥ 23               |
+| pip                     | any recent version |
+
+Java is only required when running the PySpark → Iceberg path.
+Docker is required for the local PostgreSQL and OpenSearch services.
 
 ---
 
 ## 🚀 Quick Start
 
-### Step 0 — Install dependencies & start Postgres
+### Step 0 — Install dependencies & start PostgreSQL + OpenSearch
 
 ```bash
 # Create & activate virtual environment
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 
 # Install Python packages
 pip install -r requirements.txt
 
-# Start PostgreSQL container (runs in background)
-docker compose up -d
+# Start PostgreSQL + OpenSearch containers (runs in background)
+docker compose up -d db opensearch
 
 # Wait ~10 s for Postgres to be healthy, then run migrations
 python manage.py makemigrations
 python manage.py migrate
 ```
 
+OpenSearch is exposed locally on `http://localhost:9200`, so you can manage it
+through plain `docker compose` and REST calls without sudo.
+If the OpenSearch container exits immediately on Ubuntu with a
+`vm.max_map_count` bootstrap error, that host-level setting must be adjusted
+once by an administrator.
+
 ---
 
-### Command 1 — Run the full ETL, PostgreSQL load, and Iceberg write
+### Command 1 — Run the full ETL, PostgreSQL load, OpenSearch indexing, and Iceberg write
 
 ```bash
 python manage.py etl                    # Run both branches
-python manage.py etl --pandas           # Run only Pandas → PostgreSQL branch
+python manage.py etl --pandas           # Run only Pandas → PostgreSQL + OpenSearch branch
 python manage.py etl --pyspark          # Run only PySpark → Iceberg branch
 ```
 
 **What this does:**
 
 1. Fetches raw carts & users from `https://dummyjson.com` (with retry + back-off)
-2. Launches the Pandas branch for synthesize → enrich → transform → CSV → PostgreSQL (if --pandas or no flag)
+2. Launches the Pandas branch for synthesize → enrich → transform → CSV → PostgreSQL → OpenSearch (if --pandas or no flag)
 3. Launches the parallel PySpark branch for synthesize → enrich → transform → Iceberg (if --pyspark or no flag)
 4. Writes `data/processed/customer_analytics.csv` and `data/processed/order_analytics.csv` (Pandas branch)
 5. Upserts both analytics datasets into PostgreSQL using Django ORM (Pandas branch)
-6. Creates or replaces the Iceberg tables `local.analytics.customer_analytics` and `local.analytics.order_analytics` (PySpark branch)
+6. Creates or replaces the OpenSearch indices `customer_analytics` and `order_analytics` with explicit field mappings (Pandas branch)
+7. Creates or replaces the Iceberg tables `local.analytics.customer_analytics` and `local.analytics.order_analytics` (PySpark branch)
 
 Logs stream to the console **and** `logs/etl_pipeline.log`.
 
@@ -119,9 +129,21 @@ database:
   name: "etl_db"
   user: "etl_user"
   password: "etl_password"
+
+opensearch:
+  host: "localhost"
+  port: 9200
+  use_ssl: false
+  verify_certs: false
+  timeout: 30
+  recreate_indexes: true
+  customer_index: "customer_analytics"
+  order_index: "order_analytics"
 ```
 
 The Spark branch writes to a local Hadoop Iceberg catalog rooted at `data/iceberg/warehouse`.
+The Pandas branch also recreates and bulk-loads the OpenSearch indices on each
+run by default so the field mappings stay aligned with the transformed schema.
 
 Values are loaded lazily via `config/loader.py` using dot-notation:
 
@@ -170,6 +192,50 @@ db_host = get("database.host")   # → "localhost"
 | `dominant_category`      | VARCHAR          | category with the highest gross contribution     |
 | `payment_method`         | VARCHAR          | Credit Card, PayPal, Apple Pay…                  |
 | `shipping_provider`      | VARCHAR          | UPS, FedEx, DHL…                                 |
+
+---
+
+## 🔎 OpenSearch Indices
+
+The Pandas branch indexes the transformed analytics tables into OpenSearch with
+explicit mappings and `dynamic: strict` so only the expected schema is stored.
+
+### `customer_analytics` index mapping
+
+| Field                  | OpenSearch type |
+| ---------------------- | --------------- |
+| `customer_id`          | `integer`       |
+| `full_name`            | `text` + `keyword` subfield |
+| `email`                | `keyword`       |
+| `email_domain`         | `keyword`       |
+| `city`                 | `keyword`       |
+| `customer_tenure_days` | `integer`       |
+| `total_orders`         | `integer`       |
+| `total_spent`          | `double`        |
+| `avg_order_value`      | `double`        |
+| `lifetime_value_score` | `double`        |
+| `customer_segment`     | `keyword`       |
+
+### `order_analytics` index mapping
+
+| Field                    | OpenSearch type |
+| ------------------------ | --------------- |
+| `order_id`               | `keyword`       |
+| `customer_id`            | `integer`       |
+| `order_timestamp`        | `date`          |
+| `order_date`             | `date`          |
+| `order_hour`             | `integer`       |
+| `gross_amount`           | `double`        |
+| `total_discount_amount`  | `double`        |
+| `net_amount`             | `double`        |
+| `shipping_cost`          | `double`        |
+| `final_amount`           | `double`        |
+| `total_items`            | `integer`       |
+| `discount_ratio`         | `double`        |
+| `order_complexity_score` | `integer`       |
+| `dominant_category`      | `keyword`       |
+| `payment_method`         | `keyword`       |
+| `shipping_provider`      | `keyword`       |
 
 ---
 
@@ -231,6 +297,36 @@ jupyter notebook pandas_viewer.ipynb
 
 This notebook connects to PostgreSQL and displays sample data and counts for the analytics tables.
 
+To inspect the OpenSearch indices and mappings:
+
+```bash
+curl http://localhost:9200/_cat/indices?v
+curl http://localhost:9200/customer_analytics/_mapping?pretty
+curl http://localhost:9200/order_analytics/_mapping?pretty
+```
+
+To view the indexed documents stored in OpenSearch:
+
+```bash
+# Document counts
+curl http://localhost:9200/customer_analytics/_count?pretty
+curl http://localhost:9200/order_analytics/_count?pretty
+
+# Search returns the first 10 documents by default
+curl http://localhost:9200/customer_analytics/_search?pretty
+curl 'http://localhost:9200/order_analytics/_search?pretty&size=5'
+
+# Example: top 5 customers by total_spent
+curl -X GET 'http://localhost:9200/customer_analytics/_search?pretty' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "size": 5,
+    "sort": [{"total_spent": "desc"}]
+  }'
+```
+
+The document payload is returned under `hits.hits[*]._source`.
+
 To view the Iceberg tables after ETL:
 
 ```bash
@@ -267,9 +363,10 @@ spark.stop()
 ## 🐳 Docker Reference
 
 ```bash
-docker compose up -d          # start Postgres in background
+docker compose up -d db opensearch   # start Postgres + OpenSearch in background
 docker compose ps             # check health
 docker compose logs -f db     # stream Postgres logs
+docker compose logs -f opensearch   # stream OpenSearch logs
 docker compose down           # stop (data persists in volume)
 docker compose down -v        # stop AND delete all data
 ```
@@ -297,6 +394,7 @@ ecommerce_etl/
 │   └── spark_order_transformer.py
 ├── services/
 │   ├── db_service.py         ← ORM upsert helpers
+│   ├── opensearch_service.py ← OpenSearch mappings + bulk indexing
 │   ├── spark_service.py      ← Spark session + Iceberg catalog config
 │   └── iceberg_service.py    ← Iceberg table writers
 ├── utils/

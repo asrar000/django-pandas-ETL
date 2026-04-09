@@ -1,12 +1,11 @@
-version: "3.9"
-
 # ─────────────────────────────────────────────────────────────────────────────
-#  E-Commerce ETL Pipeline — PostgreSQL via Docker
+#  E-Commerce ETL Pipeline — PostgreSQL + OpenSearch via Docker
 #
-#  Start:   docker compose up -d
+#  Start:   docker compose up -d db opensearch
 #  Stop:    docker compose down
 #  Logs:    docker compose logs -f db
 #  psql:    docker compose exec db psql -U etl_user -d etl_db
+#  Search:  curl http://localhost:9200
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -32,6 +31,35 @@ services:
       timeout:  5s
       retries:  5
 
+  opensearch:
+    image: opensearchproject/opensearch:2.11.1
+    container_name: ecommerce_etl_opensearch
+    restart: unless-stopped
+
+    environment:
+      discovery.type: single-node
+      bootstrap.memory_lock: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      DISABLE_SECURITY_PLUGIN: "true"
+
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+
 volumes:
   postgres_data:
+    driver: local
+  opensearch_data:
     driver: local

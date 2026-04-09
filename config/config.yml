@@ -29,6 +29,18 @@ database:
   user: "etl_user"
   password: "etl_password"
 
+opensearch:
+  host: "localhost"
+  port: 9200
+  use_ssl: false
+  verify_certs: false
+  timeout: 30
+  recreate_indexes: true
+  customer_index: "customer_analytics"
+  order_index: "order_analytics"
+  username: ""
+  password: ""
+
 paths:
   raw_dir: "data/raw"
   processed_dir: "data/processed"

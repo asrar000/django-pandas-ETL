@@ -1,14 +1,14 @@
 """
 Management command: etl
-Runs the full ETL workflow, keeping the existing Pandas → PostgreSQL branch and
-adding a parallel PySpark → Iceberg branch from the same extracted seed data.
+Runs the full ETL workflow, keeping the existing Pandas branch for CSV,
+PostgreSQL, and OpenSearch, plus the PySpark → Iceberg branch from the same
+extracted seed data.
 
 Usage:
     python manage.py etl                    # Run both branches
-    python manage.py etl --pandas           # Run only Pandas → PostgreSQL branch
+    python manage.py etl --pandas           # Run only Pandas → PostgreSQL/OpenSearch branch
     python manage.py etl --pyspark          # Run only PySpark → Iceberg branch
 """
-from concurrent.futures import ThreadPoolExecutor
 
 from django.core.management.base import BaseCommand, CommandError
 
@@ -20,6 +20,7 @@ from processing.spark_synthesizer import synthesize_orders_spark
 from processing.synthesizer import synthesize_orders
 from services.db_service import load_customer_analytics, load_order_analytics
 from services.iceberg_service import write_analytics_to_iceberg
+from services.opensearch_service import index_analytics_to_opensearch
 from services.spark_service import build_spark_session
 from transformation.customer_transformer import build_customer_analytics
 from transformation.order_transformer import build_order_analytics
@@ -36,8 +37,8 @@ _DIVIDER = "═" * 62
 
 def _run_pandas_postgres_branch(raw_carts: list, raw_users: list) -> dict:
     """
-    Existing Pandas analytics flow used for the processed CSV outputs and the
-    PostgreSQL ORM upsert path.
+    Pandas analytics flow used for the processed CSV outputs, PostgreSQL ORM
+    upserts, and OpenSearch indexing path.
     """
     num_records = int(get("processing.num_synthetic_records", 10_000))
 
@@ -61,6 +62,9 @@ def _run_pandas_postgres_branch(raw_carts: list, raw_users: list) -> dict:
     customer_created, customer_updated = load_customer_analytics(customer_df)
     order_created, order_updated = load_order_analytics(order_df)
 
+    logger.info("[PANDAS] Indexing analytics into OpenSearch…")
+    opensearch_result = index_analytics_to_opensearch(customer_df, order_df)
+
     return {
         "customer_rows": len(customer_df),
         "order_rows": len(order_df),
@@ -68,6 +72,8 @@ def _run_pandas_postgres_branch(raw_carts: list, raw_users: list) -> dict:
         "customer_updated": customer_updated,
         "order_created": order_created,
         "order_updated": order_updated,
+        "customer_docs": opensearch_result["customer_docs"],
+        "order_docs": opensearch_result["order_docs"],
     }
 
 
@@ -115,14 +121,15 @@ def _run_spark_iceberg_branch(raw_carts: list, raw_users: list) -> dict:
 class Command(BaseCommand):
     help = (
         "Run the full ETL pipeline with two analytics branches: Pandas to "
-        "processed CSVs and PostgreSQL, and PySpark to Iceberg tables."
+        "processed CSVs, PostgreSQL, and OpenSearch, plus PySpark to "
+        "Iceberg tables."
     )
 
     def add_arguments(self, parser):
         parser.add_argument(
             '--pandas',
             action='store_true',
-            help='Run only the Pandas → PostgreSQL branch',
+            help='Run only the Pandas → PostgreSQL/OpenSearch branch',
         )
         parser.add_argument(
             '--pyspark',
@@ -164,10 +171,10 @@ class Command(BaseCommand):
         # ── 2. Analytics branches ───────────────────────────────────────────
         if run_pandas and run_pyspark:
             logger.info(
-                "[STEP 2/2]  Running Pandas→PostgreSQL and PySpark→Iceberg branches…"
+                "[STEP 2/2]  Running Pandas→PostgreSQL/OpenSearch and PySpark→Iceberg branches…"
             )
         elif run_pandas:
-            logger.info("[STEP 1/1]  Running Pandas→PostgreSQL branch…")
+            logger.info("[STEP 1/1]  Running Pandas→PostgreSQL/OpenSearch branch…")
         elif run_pyspark:
             logger.info("[STEP 1/1]  Running PySpark→Iceberg branch…")
 
@@ -181,7 +188,7 @@ class Command(BaseCommand):
                 pandas_result = _run_pandas_postgres_branch(raw_carts, raw_users)
             except Exception as exc:
                 pandas_error = exc
-                logger.exception("Pandas → PostgreSQL branch failed")
+                logger.exception("Pandas → PostgreSQL/OpenSearch branch failed")
 
         if run_pyspark:
             try:
@@ -193,7 +200,9 @@ class Command(BaseCommand):
         if pandas_error or spark_error:
             messages = []
             if pandas_error:
-                messages.append(f"Pandas/PostgreSQL branch failed: {pandas_error}")
+                messages.append(
+                    f"Pandas/PostgreSQL/OpenSearch branch failed: {pandas_error}"
+                )
             if spark_error:
                 messages.append(f"PySpark/Iceberg branch failed: {spark_error}")
             raise CommandError(" | ".join(messages))
@@ -201,7 +210,7 @@ class Command(BaseCommand):
         logger.info(_DIVIDER)
         if pandas_result:
             logger.info(
-                "  ✓ PostgreSQL branch  →  "
+                "  ✓ PostgreSQL/OpenSearch branch  →  "
                 f"{pandas_result['customer_rows']:>5} customer rows | "
                 f"{pandas_result['order_rows']:>5} order rows"
             )
@@ -209,6 +218,11 @@ class Command(BaseCommand):
                 "    ORM upserts        →  "
                 f"customers {pandas_result['customer_created']} created / {pandas_result['customer_updated']} updated | "
                 f"orders {pandas_result['order_created']} created / {pandas_result['order_updated']} updated"
+            )
+            logger.info(
+                "    OpenSearch        →  "
+                f"customers {pandas_result['customer_docs']} docs | "
+                f"orders {pandas_result['order_docs']} docs"
             )
         if spark_result:
             logger.info(
@@ -218,9 +232,9 @@ class Command(BaseCommand):
             )
         logger.info(_DIVIDER)
         if run_pandas and run_pyspark:
-            logger.info("  Full ETL complete across PostgreSQL and Iceberg.")
+            logger.info("  Full ETL complete across PostgreSQL, OpenSearch, and Iceberg.")
         elif run_pandas:
-            logger.info("  Pandas ETL complete.")
+            logger.info("  Pandas ETL complete across PostgreSQL and OpenSearch.")
         elif run_pyspark:
             logger.info("  PySpark ETL complete.")
         logger.info(_DIVIDER)
