@@ -10,7 +10,7 @@ from opensearch.indexing import bulk_index_dataframe
 from opensearch.mappings import CUSTOMER_INDEX_MAPPING, ORDER_INDEX_MAPPING
 
 
-def index_analytics_to_opensearch(
+def opensearch_write(
     customer_df: pd.DataFrame,
     order_df: pd.DataFrame,
 ) -> dict[str, int]:

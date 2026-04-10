@@ -14,7 +14,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from config.loader import get
 from extractor.api_extractor import extract_all
-from opensearch.runner import index_analytics_to_opensearch
+from opensearch.runner import  opensearch_write
 from processing.enrichment import enrich_all
 from processing.spark_enrichment import enrich_all_spark
 from processing.spark_synthesizer import synthesize_orders_spark
@@ -63,7 +63,7 @@ def _run_pandas_postgres_branch(raw_carts: list, raw_users: list) -> dict:
     order_created, order_updated = load_order_analytics(order_df)
 
     logger.info("[PANDAS] Indexing analytics into OpenSearch…")
-    opensearch_result = index_analytics_to_opensearch(customer_df, order_df)
+    opensearch_result = opensearch_write(customer_df, order_df)
 
     return {
         "customer_rows": len(customer_df),

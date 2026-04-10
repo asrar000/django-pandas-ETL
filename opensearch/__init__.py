@@ -6,7 +6,7 @@ from opensearch.indexing import (
     create_or_replace_index,
 )
 from opensearch.mappings import CUSTOMER_INDEX_MAPPING, ORDER_INDEX_MAPPING
-from opensearch.runner import index_analytics_to_opensearch
+from opensearch.runner import opensearch_write
 from opensearch.serialization import (
     build_json_spark_session,
     records_from_dataframe,
@@ -22,7 +22,7 @@ __all__ = [
     "build_opensearch_client",
     "bulk_index_dataframe",
     "create_or_replace_index",
-    "index_analytics_to_opensearch",
+    "opensearch_write",
     "records_from_dataframe",
     "spark_dataframe_from_pandas",
     "serialize_value",
