@@ -14,13 +14,13 @@ from django.core.management.base import BaseCommand, CommandError
 
 from config.loader import get
 from extractor.api_extractor import extract_all
+from opensearch.runner import index_analytics_to_opensearch
 from processing.enrichment import enrich_all
 from processing.spark_enrichment import enrich_all_spark
 from processing.spark_synthesizer import synthesize_orders_spark
 from processing.synthesizer import synthesize_orders
 from services.db_service import load_customer_analytics, load_order_analytics
 from services.iceberg_service import write_analytics_to_iceberg
-from services.opensearch_service import index_analytics_to_opensearch
 from services.spark_service import build_spark_session
 from transformation.customer_transformer import build_customer_analytics
 from transformation.order_transformer import build_order_analytics

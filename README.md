@@ -15,8 +15,9 @@ pipeline/management/commands/etl.py  ← single entry point
 ├── extractor/           ← Step 1 : shared HTTP extraction with retries/back-off
 ├── processing/          ← Pandas + PySpark synthesis and enrichment logic
 ├── transformation/      ← Pandas + PySpark analytics builders
+├── opensearch/          ← OpenSearch client · mappings · serialization · indexing
 ├── utils/               ← paths · logger · writer  (shared, imported everywhere)
-├── services/            ← PostgreSQL ORM loaders + OpenSearch + Spark/Iceberg helpers
+├── services/            ← PostgreSQL ORM loaders + Spark/Iceberg helpers
 │
 ├── pipeline/            ← Django app : models · admin · management command
 │   └── management/commands/
@@ -91,7 +92,7 @@ python manage.py etl --pyspark          # Run only PySpark → Iceberg branch
 3. Launches the parallel PySpark branch for synthesize → enrich → transform → Iceberg (if --pyspark or no flag)
 4. Writes `data/processed/customer_analytics.csv` and `data/processed/order_analytics.csv` (Pandas branch)
 5. Upserts both analytics datasets into PostgreSQL using Django ORM (Pandas branch)
-6. Creates or replaces the OpenSearch indices `customer_analytics` and `order_analytics` with explicit field mappings (Pandas branch)
+6. Creates the OpenSearch indices `customer_analytics` and `order_analytics` if needed and bulk-indexes the transformed analytics documents (Pandas branch)
 7. Creates or replaces the Iceberg tables `local.analytics.customer_analytics` and `local.analytics.order_analytics` (PySpark branch)
 
 Logs stream to the console **and** `logs/etl_pipeline.log`.
@@ -142,8 +143,8 @@ opensearch:
 ```
 
 The Spark branch writes to a local Hadoop Iceberg catalog rooted at `data/iceberg/warehouse`.
-The Pandas branch also recreates and bulk-loads the OpenSearch indices on each
-run by default so the field mappings stay aligned with the transformed schema.
+The Pandas branch creates the OpenSearch indices when they are missing and then
+bulk-loads the transformed analytics documents into them.
 
 Values are loaded lazily via `config/loader.py` using dot-notation:
 
@@ -392,9 +393,15 @@ ecommerce_etl/
 │   ├── order_transformer.py
 │   ├── spark_customer_transformer.py
 │   └── spark_order_transformer.py
+├── opensearch/
+│   ├── client.py             ← OpenSearch client/config helpers
+│   ├── mappings.py           ← index mappings
+│   ├── serialization.py      ← DataFrame → JSON document helpers
+│   ├── indexing.py           ← index creation + bulk indexing flow
+│   ├── runner.py             ← OpenSearch orchestration entry point
+│   └── __init__.py           ← public OpenSearch package API
 ├── services/
 │   ├── db_service.py         ← ORM upsert helpers
-│   ├── opensearch_service.py ← OpenSearch mappings + bulk indexing
 │   ├── spark_service.py      ← Spark session + Iceberg catalog config
 │   └── iceberg_service.py    ← Iceberg table writers
 ├── utils/
