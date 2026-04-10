@@ -10,6 +10,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 def main():
+    """Run Django's management command entry point for this project."""
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "etl_core.settings")
     try:
         from django.core.management import execute_from_command_line

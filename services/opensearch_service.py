@@ -76,6 +76,7 @@ ORDER_INDEX_MAPPING = {
 
 
 def _as_bool(value: Any) -> bool:
+    """Normalize common truthy and falsy config values into a boolean."""
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -113,6 +114,7 @@ def _create_or_replace_index(
     index_name: str,
     mapping: dict[str, Any],
 ) -> None:
+    """Ensure an index exists with the expected mapping, recreating it if configured."""
     recreate_indexes = _as_bool(get("opensearch.recreate_indexes", True))
     exists = client.indices.exists(index=index_name)
 
@@ -129,6 +131,7 @@ def _create_or_replace_index(
 
 
 def _serialize_value(value: Any) -> Any:
+    """Convert Pandas- and Python-specific values into JSON-safe primitives."""
     if value is None:
         return None
 
@@ -159,6 +162,7 @@ def _serialize_value(value: Any) -> Any:
 
 
 def _records_from_dataframe(df: pd.DataFrame) -> list[dict[str, Any]]:
+    """Convert a DataFrame into serialized record dictionaries for indexing."""
     records: list[dict[str, Any]] = []
     for record in df.to_dict(orient="records"):
         records.append(
@@ -177,6 +181,7 @@ def _bulk_index_dataframe(
     mapping: dict[str, Any],
     id_field: str,
 ) -> int:
+    """Create the target index if needed and bulk index all DataFrame rows."""
     _create_or_replace_index(client, index_name, mapping)
     records = _records_from_dataframe(df)
 

@@ -126,6 +126,7 @@ class Command(BaseCommand):
     )
 
     def add_arguments(self, parser):
+        """Register CLI flags that select which analytics branches to run."""
         parser.add_argument(
             '--pandas',
             action='store_true',
@@ -138,6 +139,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options) -> None:
+        """Execute extraction and run the requested Pandas and/or Spark branches."""
         run_pandas = options['pandas'] or not (options['pandas'] or options['pyspark'])
         run_pyspark = options['pyspark'] or not (options['pandas'] or options['pyspark'])
 

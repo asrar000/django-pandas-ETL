@@ -27,6 +27,7 @@ def _lifetime_value_score(total_spent: float, total_orders: int, tenure_days: in
 
 
 def _customer_segment(ltv: float) -> str:
+    """Map a lifetime value score to a High, Medium, or Low segment."""
     if ltv >= 60:
         return "High"
     if ltv >= 30:

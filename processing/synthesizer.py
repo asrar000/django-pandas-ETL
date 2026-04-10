@@ -134,6 +134,7 @@ _PRODUCTS: dict[str, list[tuple[str, float, float]]] = {
 # ── Internal generators ───────────────────────────────────────────────────────
 
 def _random_dt(days_ago_min: int = 0, days_ago_max: int = 365) -> datetime:
+    """Return a random naive datetime within the requested day range."""
     offset = random.randint(days_ago_min, days_ago_max)
     base = datetime.now() - timedelta(days=offset)
     # Add random hour/minute/second
@@ -146,6 +147,7 @@ def _random_dt(days_ago_min: int = 0, days_ago_max: int = 365) -> datetime:
 
 
 def _make_user(user_id: int) -> dict:
+    """Build one fully synthetic user record for the generated dataset."""
     first = random.choice(_FIRST_NAMES)
     last  = random.choice(_LAST_NAMES)
     domain = random.choice(_EMAIL_DOMAINS)
@@ -162,6 +164,7 @@ def _make_user(user_id: int) -> dict:
 
 
 def _make_cart(cart_id: int, user_id: int) -> dict:
+    """Build one fully synthetic cart/order record for a given user."""
     n_cats = random.randint(1, min(4, len(_PRODUCTS)))
     chosen_cats = random.sample(list(_PRODUCTS.keys()), n_cats)
 

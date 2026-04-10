@@ -55,6 +55,7 @@ _CART_SCHEMA = T.StructType([
 
 
 def _random_dt(seed: int, days_ago_min: int, days_ago_max: int) -> datetime:
+    """Return a deterministic pseudo-random datetime derived from *seed*."""
     rng = random.Random(seed)
     offset = rng.randint(days_ago_min, days_ago_max)
     base = datetime.now() - timedelta(days=offset)
@@ -87,12 +88,14 @@ def synthesize_orders_spark(
 
     @F.udf(returnType=T.IntegerType())
     def mapped_user_id(cart_id: int) -> int:
+        """Map each generated cart ID to the corresponding user ID."""
         if pool_size == 0:
             return int(cart_id)
         return int(real_user_ids[(cart_id - 1) % pool_size])
 
     @F.udf(returnType=_USER_SCHEMA)
     def build_user(user_id: int):
+        """Construct a Spark user struct from seeded or synthetic values."""
         if pool_size > 0 and user_id in real_user_pool:
             real_user = real_user_pool[user_id]
             created_at = real_user.get("createdAt")
@@ -131,6 +134,7 @@ def synthesize_orders_spark(
 
     @F.udf(returnType=_CART_SCHEMA)
     def build_cart(cart_id: int, user_id: int):
+        """Construct a Spark cart struct with deterministic synthetic content."""
         rng = random.Random(cart_id * 1009 + user_id)
         n_cats = rng.randint(1, min(4, len(_PRODUCTS)))
         chosen_cats = rng.sample(list(_PRODUCTS.keys()), n_cats)
