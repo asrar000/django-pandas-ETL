@@ -10,6 +10,7 @@ from opensearch.runner import index_analytics_to_opensearch
 from opensearch.serialization import (
     build_json_spark_session,
     records_from_dataframe,
+    spark_dataframe_from_pandas,
     serialize_value,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "create_or_replace_index",
     "index_analytics_to_opensearch",
     "records_from_dataframe",
+    "spark_dataframe_from_pandas",
     "serialize_value",
 ]

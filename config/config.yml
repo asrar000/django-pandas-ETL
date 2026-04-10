@@ -35,9 +35,9 @@ opensearch:
   use_ssl: false
   verify_certs: false
   timeout: 30
-  recreate_indexes: true
   customer_index: "customer_analytics"
   order_index: "order_analytics"
+  spark_package: "org.opensearch.client:opensearch-spark-35_2.12:2.0.0"
   username: ""
   password: ""
 

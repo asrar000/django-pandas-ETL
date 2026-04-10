@@ -137,14 +137,15 @@ opensearch:
   use_ssl: false
   verify_certs: false
   timeout: 30
-  recreate_indexes: true
   customer_index: "customer_analytics"
   order_index: "order_analytics"
+  spark_package: "org.opensearch.client:opensearch-spark-35_2.12:2.0.0"
 ```
 
 The Spark branch writes to a local Hadoop Iceberg catalog rooted at `data/iceberg/warehouse`.
 The Pandas branch creates the OpenSearch indices when they are missing and then
-bulk-loads the transformed analytics documents into them.
+bulk-loads the transformed analytics documents into them through the OpenSearch
+Spark connector.
 
 Values are loaded lazily via `config/loader.py` using dot-notation:
 

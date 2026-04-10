@@ -9,13 +9,23 @@ from decimal import Decimal
 from typing import Any
 
 import pandas as pd
-from pyspark.sql import SparkSession
+from pyspark.sql import DataFrame as SparkDataFrame, SparkSession
+
+from config.loader import get
+
+_DEFAULT_OPENSEARCH_SPARK_PACKAGE = (
+    "org.opensearch.client:opensearch-spark-35_2.12:2.0.0"
+)
 
 
 def build_json_spark_session() -> SparkSession:
-    """Build a temporary local Spark session for DataFrame JSON serialization."""
+    """Build a temporary local Spark session for OpenSearch serialization and writes."""
     os.environ.setdefault("SPARK_LOCAL_IP", "127.0.0.1")
     os.environ.setdefault("SPARK_LOCAL_HOSTNAME", "localhost")
+    opensearch_package = get(
+        "opensearch.spark_package",
+        _DEFAULT_OPENSEARCH_SPARK_PACKAGE,
+    )
     spark = (
         SparkSession.builder
         .appName("opensearch_json_serializer")
@@ -23,6 +33,7 @@ def build_json_spark_session() -> SparkSession:
         .config("spark.driver.host", "127.0.0.1")
         .config("spark.driver.bindAddress", "127.0.0.1")
         .config("spark.ui.showConsoleProgress", "false")
+        .config("spark.jars.packages", opensearch_package)
         .getOrCreate()
     )
     spark.sparkContext.setLogLevel("WARN")
@@ -60,11 +71,8 @@ def serialize_value(value: Any) -> Any:
     return value
 
 
-def records_from_dataframe(df: pd.DataFrame) -> list[dict[str, Any]]:
-    """Convert a DataFrame into serialized record dictionaries for indexing."""
-    if df.empty:
-        return []
-
+def spark_dataframe_from_pandas(df: pd.DataFrame) -> SparkDataFrame:
+    """Convert a Pandas DataFrame into a Spark DataFrame for OpenSearch writes."""
     normalized_records = [
         {
             field: serialize_value(value)
@@ -74,8 +82,16 @@ def records_from_dataframe(df: pd.DataFrame) -> list[dict[str, Any]]:
     ]
 
     spark = build_json_spark_session()
+    return spark.createDataFrame(normalized_records)
+
+
+def records_from_dataframe(df: pd.DataFrame) -> list[dict[str, Any]]:
+    """Convert a DataFrame into serialized record dictionaries for indexing."""
+    if df.empty:
+        return []
+
+    spark = spark_dataframe_from_pandas(df)
     try:
-        spark_df = spark.createDataFrame(normalized_records)
-        return [json.loads(record) for record in spark_df.toJSON().collect()]
+        return [json.loads(record) for record in spark.toJSON().collect()]
     finally:
-        spark.stop()
+        spark.sparkSession.stop()

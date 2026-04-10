@@ -5,10 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 import pandas as pd
-from opensearchpy import OpenSearch, helpers
+from opensearchpy import OpenSearch
 
 from config.loader import get
-from opensearch.serialization import records_from_dataframe
+from opensearch.client import as_bool
+from opensearch.serialization import spark_dataframe_from_pandas
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -39,28 +40,37 @@ def bulk_index_dataframe(
 ) -> int:
     """Create the target index if needed and bulk index all DataFrame rows."""
     create_or_replace_index(client, index_name, mapping)
-    records = records_from_dataframe(df)
-
-    if not records:
+    if df.empty:
         logger.info(f"No analytics rows to index for {index_name}")
         return 0
 
-    success_count, failure_count = helpers.bulk(
-        client,
-        [
-            {
-                "_index": index_name,
-                "_id": record[id_field],
-                "_source": record,
-            }
-            for record in records
-        ],
-        chunk_size=500,
-        refresh="wait_for",
-        request_timeout=int(get("opensearch.timeout", 30)),
-        stats_only=True,
-        raise_on_error=True,
-    )
+    spark = spark_dataframe_from_pandas(df)
+    try:
+        success_count = spark.count()
+        if success_count == 0:
+            logger.info(f"No analytics rows to index for {index_name}")
+            return 0
+
+        spark.sparkSession.conf.set(
+            "opensearch.port",
+            str(get("opensearch.port", 9200)),
+        )
+        spark.sparkSession.conf.set("opensearch.mapping.id", id_field)
+        spark.sparkSession.conf.set(
+            "opensearch.net.ssl",
+            str(as_bool(get("opensearch.use_ssl", False))).lower(),
+        )
+
+        username = str(get("opensearch.username", "") or "")
+        password = str(get("opensearch.password", "") or "")
+        if username and password:
+            spark.sparkSession.conf.set("opensearch.net.http.auth.user", username)
+            spark.sparkSession.conf.set("opensearch.net.http.auth.pass", password)
+
+        spark.write.format("opensearch").option("opensearch.nodes", get("opensearch.host")).save(index_name)
+        failure_count = 0
+    finally:
+        spark.sparkSession.stop()
 
     logger.info(
         f"Indexed {success_count} documents into {index_name} "
