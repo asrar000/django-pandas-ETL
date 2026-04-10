@@ -130,20 +130,15 @@ def create_or_replace_index(
     index_name: str,
     mapping: dict[str, Any],
 ) -> None:
-    """Ensure an index exists with the expected mapping, recreating it if configured."""
-    recreate_indexes = as_bool(get("opensearch.recreate_indexes", True))
+    """Ensure an index exists, preserving any existing index and mapping."""
     exists = client.indices.exists(index=index_name)
 
-    if recreate_indexes and exists:
-        client.indices.delete(index=index_name)
-        exists = False
-        logger.info(f"Recreated OpenSearch index mapping → {index_name}")
-
-    if not exists:
-        client.indices.create(index=index_name, body=mapping)
-        logger.info(f"Created OpenSearch index → {index_name}")
-    else:
+    if exists:
         logger.info(f"Reusing existing OpenSearch index → {index_name}")
+        return
+
+    client.indices.create(index=index_name, body=mapping)
+    logger.info(f"Created OpenSearch index → {index_name}")
 
 
 def serialize_value(value: Any) -> Any:
