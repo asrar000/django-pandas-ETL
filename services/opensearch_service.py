@@ -1,14 +1,15 @@
-"""
-OpenSearch helpers for indexing analytics datasets with explicit mappings.
-"""
+"""OpenSearch helpers for indexing analytics datasets with explicit mappings."""
 from __future__ import annotations
 
+import json
+import os
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
 import pandas as pd
 from opensearchpy import OpenSearch, helpers
+from pyspark.sql import SparkSession
 
 from config.loader import get
 from utils.logger import get_logger
@@ -75,7 +76,7 @@ ORDER_INDEX_MAPPING = {
 }
 
 
-def _as_bool(value: Any) -> bool:
+def as_bool(value: Any) -> bool:
     """Normalize common truthy and falsy config values into a boolean."""
     if isinstance(value, bool):
         return value
@@ -85,12 +86,10 @@ def _as_bool(value: Any) -> bool:
 
 
 def build_opensearch_client() -> OpenSearch:
-    """
-    Build an OpenSearch client from config/config.yml.
-    """
+    """Build an OpenSearch client from config/config.yml."""
     username = str(get("opensearch.username", "") or "")
     password = str(get("opensearch.password", "") or "")
-    verify_certs = _as_bool(get("opensearch.verify_certs", False))
+    verify_certs = as_bool(get("opensearch.verify_certs", False))
 
     return OpenSearch(
         hosts=[
@@ -100,7 +99,7 @@ def build_opensearch_client() -> OpenSearch:
             }
         ],
         http_auth=(username, password) if username and password else None,
-        use_ssl=_as_bool(get("opensearch.use_ssl", False)),
+        use_ssl=as_bool(get("opensearch.use_ssl", False)),
         verify_certs=verify_certs,
         ssl_assert_hostname=verify_certs,
         ssl_show_warn=verify_certs,
@@ -109,13 +108,30 @@ def build_opensearch_client() -> OpenSearch:
     )
 
 
-def _create_or_replace_index(
+def build_json_spark_session() -> SparkSession:
+    """Build a temporary local Spark session for DataFrame JSON serialization."""
+    os.environ.setdefault("SPARK_LOCAL_IP", "127.0.0.1")
+    os.environ.setdefault("SPARK_LOCAL_HOSTNAME", "localhost")
+    spark = (
+        SparkSession.builder
+        .appName("opensearch_json_serializer")
+        .master("local[1]")
+        .config("spark.driver.host", "127.0.0.1")
+        .config("spark.driver.bindAddress", "127.0.0.1")
+        .config("spark.ui.showConsoleProgress", "false")
+        .getOrCreate()
+    )
+    spark.sparkContext.setLogLevel("WARN")
+    return spark
+
+
+def create_or_replace_index(
     client: OpenSearch,
     index_name: str,
     mapping: dict[str, Any],
 ) -> None:
     """Ensure an index exists with the expected mapping, recreating it if configured."""
-    recreate_indexes = _as_bool(get("opensearch.recreate_indexes", True))
+    recreate_indexes = as_bool(get("opensearch.recreate_indexes", True))
     exists = client.indices.exists(index=index_name)
 
     if recreate_indexes and exists:
@@ -130,7 +146,7 @@ def _create_or_replace_index(
         logger.info(f"Reusing existing OpenSearch index → {index_name}")
 
 
-def _serialize_value(value: Any) -> Any:
+def serialize_value(value: Any) -> Any:
     """Convert Pandas- and Python-specific values into JSON-safe primitives."""
     if value is None:
         return None
@@ -161,20 +177,28 @@ def _serialize_value(value: Any) -> Any:
     return value
 
 
-def _records_from_dataframe(df: pd.DataFrame) -> list[dict[str, Any]]:
+def records_from_dataframe(df: pd.DataFrame) -> list[dict[str, Any]]:
     """Convert a DataFrame into serialized record dictionaries for indexing."""
-    records: list[dict[str, Any]] = []
-    for record in df.to_dict(orient="records"):
-        records.append(
-            {
-                field: _serialize_value(value)
-                for field, value in record.items()
-            }
-        )
-    return records
+    if df.empty:
+        return []
+
+    normalized_records = [
+        {
+            field: serialize_value(value)
+            for field, value in record.items()
+        }
+        for record in df.to_dict(orient="records")
+    ]
+
+    spark = build_json_spark_session()
+    try:
+        spark_df = spark.createDataFrame(normalized_records)
+        return [json.loads(record) for record in spark_df.toJSON().collect()]
+    finally:
+        spark.stop()
 
 
-def _bulk_index_dataframe(
+def bulk_index_dataframe(
     client: OpenSearch,
     df: pd.DataFrame,
     index_name: str,
@@ -182,8 +206,8 @@ def _bulk_index_dataframe(
     id_field: str,
 ) -> int:
     """Create the target index if needed and bulk index all DataFrame rows."""
-    _create_or_replace_index(client, index_name, mapping)
-    records = _records_from_dataframe(df)
+    create_or_replace_index(client, index_name, mapping)
+    records = records_from_dataframe(df)
 
     if not records:
         logger.info(f"No analytics rows to index for {index_name}")
@@ -217,10 +241,7 @@ def index_analytics_to_opensearch(
     customer_df: pd.DataFrame,
     order_df: pd.DataFrame,
 ) -> dict[str, int]:
-    """
-    Create the analytics indices with explicit mappings and bulk index the
-    transformed customer and order datasets.
-    """
+    """Create the analytics indices and bulk index the customer and order datasets."""
     client = build_opensearch_client()
     if not client.ping():
         raise RuntimeError(
@@ -231,14 +252,14 @@ def index_analytics_to_opensearch(
     customer_index = str(get("opensearch.customer_index", "customer_analytics"))
     order_index = str(get("opensearch.order_index", "order_analytics"))
 
-    customer_docs = _bulk_index_dataframe(
+    customer_docs = bulk_index_dataframe(
         client,
         customer_df,
         customer_index,
         CUSTOMER_INDEX_MAPPING,
         "customer_id",
     )
-    order_docs = _bulk_index_dataframe(
+    order_docs = bulk_index_dataframe(
         client,
         order_df,
         order_index,
