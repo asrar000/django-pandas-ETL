@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-#  E-Commerce ETL Pipeline — PostgreSQL + OpenSearch + DynamoDB Local via Docker
+#  E-Commerce ETL Pipeline — PostgreSQL + OpenSearch + Iceberg + DynamoDB Local via Docker
 #
 #  Start:   docker compose up -d db opensearch dynamodb-local
 #  Stop:    docker compose down
