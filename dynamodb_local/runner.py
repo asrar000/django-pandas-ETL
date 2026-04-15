@@ -18,7 +18,7 @@ from dynamodb_local.writer import (
 )
 
 
-def _json_default(value):
+def json_default(value):
     """Serialize Decimal values for CLI JSON output."""
     if isinstance(value, Decimal):
         return float(value)
@@ -98,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 scan_table_items(dynamodb, args.table_name, limit=args.limit),
                 indent=2,
-                default=_json_default,
+                default=json_default,
             )
         )
         return 0
@@ -116,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
                 limit=args.limit,
             ),
         }
-        print(json.dumps(payload, indent=2, default=_json_default))
+        print(json.dumps(payload, indent=2, default=json_default))
         return 0
 
     return 1
