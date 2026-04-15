@@ -2,8 +2,8 @@
 
 A production-structured Django ETL project with two parallel analytics paths from the same extracted seed data:
 
-- a Pandas path that writes processed CSVs and upserts PostgreSQL through Django ORM
-- a PySpark path that mirrors the same synthesize, enrich, and transform logic and writes Iceberg tables
+- a Pandas path that writes processed CSVs, upserts PostgreSQL through Django ORM, and indexes OpenSearch
+- a PySpark path that mirrors the same synthesize, enrich, and transform logic and writes Iceberg tables plus DynamoDB Local tables
 
 ---
 
@@ -15,6 +15,8 @@ pipeline/management/commands/etl.py  ← single entry point
 ├── extractor/           ← Step 1 : shared HTTP extraction with retries/back-off
 ├── processing/          ← Pandas + PySpark synthesis and enrichment logic
 ├── transformation/      ← Pandas + PySpark analytics builders
+├── opensearch/          ← OpenSearch client · mappings · serialization · indexing
+├── dynamodb_local/      ← local DynamoDB client · table management · write CLI
 ├── utils/               ← paths · logger · writer  (shared, imported everywhere)
 ├── services/            ← PostgreSQL ORM loaders + Spark/Iceberg helpers
 │
@@ -38,51 +40,65 @@ pipeline/management/commands/etl.py  ← single entry point
 
 | Tool                    | Version            |
 | ----------------------- | ------------------ |
-| Python                  | ≥ 3.11             |
-| Java                    | ≥ 17               |
+| Python                  | 3.10 or 3.11       |
+| Java                    | ≥ 17 (PySpark branch only) |
 | Docker + Docker Compose | any recent version |
-| pip                     | ≥ 23               |
+| pip                     | any recent version |
+
+Java is only required when running the PySpark → Iceberg + DynamoDB Local path.
+Docker is required for the local PostgreSQL, OpenSearch, and DynamoDB Local services.
 
 ---
 
 ## 🚀 Quick Start
 
-### Step 0 — Install dependencies & start Postgres
+### Step 0 — Install dependencies & start PostgreSQL + OpenSearch + DynamoDB Local
 
 ```bash
 # Create & activate virtual environment
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 
 # Install Python packages
 pip install -r requirements.txt
 
-# Start PostgreSQL container (runs in background)
-docker compose up -d
+# Start PostgreSQL + OpenSearch + DynamoDB Local containers (runs in background)
+docker compose up -d db opensearch dynamodb-local
 
 # Wait ~10 s for Postgres to be healthy, then run migrations
 python manage.py makemigrations
 python manage.py migrate
 ```
 
+OpenSearch is exposed locally on `http://localhost:9200`, so you can manage it
+through plain `docker compose` and REST calls without sudo.
+DynamoDB Local is exposed locally on `http://localhost:8000`, and this repo
+ships a small Python CLI so you can list, scan, and delete the local tables
+without needing AWS CLI, sudo, or root access.
+If the OpenSearch container exits immediately on Ubuntu with a
+`vm.max_map_count` bootstrap error, that host-level setting must be adjusted
+once by an administrator.
+
 ---
 
-### Command 1 — Run the full ETL, PostgreSQL load, and Iceberg write
+### Command 1 — Run the full ETL, PostgreSQL load, OpenSearch indexing, Iceberg write, and DynamoDB Local write
 
 ```bash
 python manage.py etl                    # Run both branches
-python manage.py etl --pandas           # Run only Pandas → PostgreSQL branch
-python manage.py etl --pyspark          # Run only PySpark → Iceberg branch
+python manage.py etl --pandas           # Run only Pandas → PostgreSQL + OpenSearch branch
+python manage.py etl --pyspark          # Run only PySpark → Iceberg + DynamoDB Local branch
 ```
 
 **What this does:**
 
 1. Fetches raw carts & users from `https://dummyjson.com` (with retry + back-off)
-2. Launches the Pandas branch for synthesize → enrich → transform → CSV → PostgreSQL (if --pandas or no flag)
-3. Launches the parallel PySpark branch for synthesize → enrich → transform → Iceberg (if --pyspark or no flag)
+2. Launches the Pandas branch for synthesize → enrich → transform → CSV → PostgreSQL → OpenSearch (if --pandas or no flag)
+3. Launches the parallel PySpark branch for synthesize → enrich → transform → Iceberg → DynamoDB Local (if --pyspark or no flag)
 4. Writes `data/processed/customer_analytics.csv` and `data/processed/order_analytics.csv` (Pandas branch)
 5. Upserts both analytics datasets into PostgreSQL using Django ORM (Pandas branch)
-6. Creates or replaces the Iceberg tables `local.analytics.customer_analytics` and `local.analytics.order_analytics` (PySpark branch)
+6. Creates the OpenSearch indices `customer_analytics` and `order_analytics` if needed and bulk-indexes the transformed analytics documents (Pandas branch)
+7. Creates or replaces the Iceberg tables `local.analytics.customer_analytics` and `local.analytics.order_analytics` (PySpark branch)
+8. Creates the DynamoDB Local tables `customer_analytics` and `order_analytics` if needed and writes the Spark analytics rows into them (PySpark branch)
 
 Logs stream to the console **and** `logs/etl_pipeline.log`.
 
@@ -119,9 +135,32 @@ database:
   name: "etl_db"
   user: "etl_user"
   password: "etl_password"
+
+opensearch:
+  host: "localhost"
+  port: 9200
+  use_ssl: false
+  verify_certs: false
+  timeout: 30
+  customer_index: "customer_analytics"
+  order_index: "order_analytics"
+  spark_package: "org.opensearch.client:opensearch-spark-35_2.12:2.0.0"
+
+dynamodb:
+  endpoint_url: "http://localhost:8000"
+  region_name: "us-east-1"
+  access_key_id: "dummy"
+  secret_access_key: "dummy"
+  customer_table: "customer_analytics"
+  order_table: "order_analytics"
 ```
 
 The Spark branch writes to a local Hadoop Iceberg catalog rooted at `data/iceberg/warehouse`.
+The Pandas branch creates the OpenSearch indices when they are missing and then
+bulk-loads the transformed analytics documents into them through the OpenSearch
+Spark connector.
+The PySpark branch also creates the local DynamoDB tables when they are missing
+and then writes the transformed analytics rows into them through `boto3`.
 
 Values are loaded lazily via `config/loader.py` using dot-notation:
 
@@ -173,6 +212,50 @@ db_host = get("database.host")   # → "localhost"
 
 ---
 
+## 🔎 OpenSearch Indices
+
+The Pandas branch indexes the transformed analytics tables into OpenSearch with
+explicit mappings and `dynamic: strict` so only the expected schema is stored.
+
+### `customer_analytics` index mapping
+
+| Field                  | OpenSearch type |
+| ---------------------- | --------------- |
+| `customer_id`          | `integer`       |
+| `full_name`            | `text` + `keyword` subfield |
+| `email`                | `keyword`       |
+| `email_domain`         | `keyword`       |
+| `city`                 | `keyword`       |
+| `customer_tenure_days` | `integer`       |
+| `total_orders`         | `integer`       |
+| `total_spent`          | `double`        |
+| `avg_order_value`      | `double`        |
+| `lifetime_value_score` | `double`        |
+| `customer_segment`     | `keyword`       |
+
+### `order_analytics` index mapping
+
+| Field                    | OpenSearch type |
+| ------------------------ | --------------- |
+| `order_id`               | `keyword`       |
+| `customer_id`            | `integer`       |
+| `order_timestamp`        | `date`          |
+| `order_date`             | `date`          |
+| `order_hour`             | `integer`       |
+| `gross_amount`           | `double`        |
+| `total_discount_amount`  | `double`        |
+| `net_amount`             | `double`        |
+| `shipping_cost`          | `double`        |
+| `final_amount`           | `double`        |
+| `total_items`            | `integer`       |
+| `discount_ratio`         | `double`        |
+| `order_complexity_score` | `integer`       |
+| `dominant_category`      | `keyword`       |
+| `payment_method`         | `keyword`       |
+| `shipping_provider`      | `keyword`       |
+
+---
+
 ## 🧊 Iceberg Tables
 
 The PySpark branch writes the same analytics datasets to Iceberg tables:
@@ -185,6 +268,32 @@ The local warehouse path is:
 - `data/iceberg/warehouse`
 
 Each `etl` run replaces the latest Iceberg table contents while keeping Iceberg table metadata and snapshots managed by the table format.
+
+---
+
+## 📘 DynamoDB Local Tables
+
+The PySpark branch writes the same two analytics datasets into DynamoDB Local:
+
+- `customer_analytics`
+- `order_analytics`
+
+The local endpoint is:
+
+- `http://localhost:8000`
+
+Each table uses a single hash key:
+
+| Table | Partition key | Key type |
+| ----- | ------------- | -------- |
+| `customer_analytics` | `customer_id` | `N` |
+| `order_analytics`    | `order_id`    | `S` |
+
+The tables are created automatically the first time you run:
+
+```bash
+python manage.py etl --pyspark
+```
 
 ---
 
@@ -231,6 +340,64 @@ jupyter notebook pandas_viewer.ipynb
 
 This notebook connects to PostgreSQL and displays sample data and counts for the analytics tables.
 
+To inspect the OpenSearch indices and mappings:
+
+```bash
+curl http://localhost:9200/_cat/indices?v
+curl http://localhost:9200/customer_analytics/_mapping?pretty
+curl http://localhost:9200/order_analytics/_mapping?pretty
+```
+
+To view the indexed documents stored in OpenSearch:
+
+```bash
+# Document counts
+curl http://localhost:9200/customer_analytics/_count?pretty
+curl http://localhost:9200/order_analytics/_count?pretty
+
+# Search returns the first 10 documents by default
+curl http://localhost:9200/customer_analytics/_search?pretty
+curl 'http://localhost:9200/order_analytics/_search?pretty&size=5'
+
+# Example: top 5 customers by total_spent
+curl -X GET 'http://localhost:9200/customer_analytics/_search?pretty' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "size": 5,
+    "sort": [{"total_spent": "desc"}]
+  }'
+```
+
+The document payload is returned under `hits.hits[*]._source`.
+
+To inspect the DynamoDB Local tables without AWS CLI:
+
+```bash
+# List local tables
+python -m dynamodb_local.runner list-tables
+
+# View up to 10 items from each table
+python -m dynamodb_local.runner scan-table customer_analytics --limit 10
+python -m dynamodb_local.runner scan-table order_analytics --limit 10
+
+# View both tables in one command
+python -m dynamodb_local.runner scan-all --limit 10
+```
+
+To delete the DynamoDB Local tables:
+
+```bash
+# Delete one table
+python -m dynamodb_local.runner delete-table customer_analytics
+python -m dynamodb_local.runner delete-table order_analytics
+
+# Delete both analytics tables
+python -m dynamodb_local.runner delete-all
+```
+
+These commands run against the local Docker container and work as a non-root
+user after you have started `dynamodb-local` with `docker compose`.
+
 To view the Iceberg tables after ETL:
 
 ```bash
@@ -267,9 +434,11 @@ spark.stop()
 ## 🐳 Docker Reference
 
 ```bash
-docker compose up -d          # start Postgres in background
+docker compose up -d db opensearch dynamodb-local   # start local services in background
 docker compose ps             # check health
 docker compose logs -f db     # stream Postgres logs
+docker compose logs -f opensearch   # stream OpenSearch logs
+docker compose logs -f dynamodb-local   # stream DynamoDB Local logs
 docker compose down           # stop (data persists in volume)
 docker compose down -v        # stop AND delete all data
 ```
@@ -295,6 +464,19 @@ ecommerce_etl/
 │   ├── order_transformer.py
 │   ├── spark_customer_transformer.py
 │   └── spark_order_transformer.py
+├── opensearch/
+│   ├── client.py             ← OpenSearch client/config helpers
+│   ├── mappings.py           ← index mappings
+│   ├── serialization.py      ← DataFrame → JSON document helpers
+│   ├── indexing.py           ← index creation + bulk indexing flow
+│   ├── runner.py             ← OpenSearch orchestration entry point
+│   └── __init__.py           ← public OpenSearch package API
+├── dynamodb_local/
+│   ├── client.py             ← boto3 DynamoDB Local clients/resources
+│   ├── tables.py             ← table names + key definitions
+│   ├── writer.py             ← table creation, scan, delete, and batch writes
+│   ├── runner.py             ← DynamoDB Local orchestration and CLI entry point
+│   └── __init__.py           ← public DynamoDB Local package API
 ├── services/
 │   ├── db_service.py         ← ORM upsert helpers
 │   ├── spark_service.py      ← Spark session + Iceberg catalog config
@@ -336,3 +518,4 @@ ecommerce_etl/
 | `django.db.utils.OperationalError`             | Check `config/config.yml` DB credentials match `docker-compose.yml`                                  |
 | Spark/Iceberg startup is slow on the first run | Spark downloads the Iceberg runtime JAR once into `~/.ivy2`; later runs are faster                   |
 | Iceberg write fails before Spark starts        | Make sure Java is installed and the machine can reach Maven Central for the Iceberg package download |
+| `EndpointConnectionError` on port 8000         | Start DynamoDB Local with `docker compose up -d dynamodb-local` and retry                            |

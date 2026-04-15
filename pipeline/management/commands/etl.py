@@ -1,19 +1,21 @@
 """
 Management command: etl
-Runs the full ETL workflow, keeping the existing Pandas → PostgreSQL branch and
-adding a parallel PySpark → Iceberg branch from the same extracted seed data.
+Runs the full ETL workflow, keeping the existing Pandas branch for CSV,
+PostgreSQL, and OpenSearch, plus the PySpark analytics branch from the same
+extracted seed data, with Iceberg and DynamoDB Local writes on the Spark side.
 
 Usage:
     python manage.py etl                    # Run both branches
-    python manage.py etl --pandas           # Run only Pandas → PostgreSQL branch
-    python manage.py etl --pyspark          # Run only PySpark → Iceberg branch
+    python manage.py etl --pandas           # Run only Pandas → PostgreSQL/OpenSearch branch
+    python manage.py etl --pyspark          # Run only PySpark → Iceberg/DynamoDB Local branch
 """
-from concurrent.futures import ThreadPoolExecutor
 
 from django.core.management.base import BaseCommand, CommandError
 
 from config.loader import get
+from dynamodb_local.runner import write_analytics_to_dynamodb
 from extractor.api_extractor import extract_all
+from opensearch.runner import opensearch_write
 from processing.enrichment import enrich_all
 from processing.spark_enrichment import enrich_all_spark
 from processing.spark_synthesizer import synthesize_orders_spark
@@ -36,8 +38,8 @@ _DIVIDER = "═" * 62
 
 def _run_pandas_postgres_branch(raw_carts: list, raw_users: list) -> dict:
     """
-    Existing Pandas analytics flow used for the processed CSV outputs and the
-    PostgreSQL ORM upsert path.
+    Pandas analytics flow used for the processed CSV outputs, PostgreSQL ORM
+    upserts, and OpenSearch indexing path.
     """
     num_records = int(get("processing.num_synthetic_records", 10_000))
 
@@ -61,6 +63,9 @@ def _run_pandas_postgres_branch(raw_carts: list, raw_users: list) -> dict:
     customer_created, customer_updated = load_customer_analytics(customer_df)
     order_created, order_updated = load_order_analytics(order_df)
 
+    logger.info("[PANDAS] Indexing analytics into OpenSearch…")
+    opensearch_result = opensearch_write(customer_df, order_df)
+
     return {
         "customer_rows": len(customer_df),
         "order_rows": len(order_df),
@@ -68,13 +73,15 @@ def _run_pandas_postgres_branch(raw_carts: list, raw_users: list) -> dict:
         "customer_updated": customer_updated,
         "order_created": order_created,
         "order_updated": order_updated,
+        "customer_docs": opensearch_result["customer_docs"],
+        "order_docs": opensearch_result["order_docs"],
     }
 
 
 def _run_spark_iceberg_branch(raw_carts: list, raw_users: list) -> dict:
     """
     Spark analytics flow that mirrors the Pandas business logic and writes the
-    resulting analytics tables to Iceberg.
+    resulting analytics tables to Iceberg and DynamoDB Local.
     """
     num_records = int(get("processing.num_synthetic_records", 10_000))
     spark = build_spark_session()
@@ -101,12 +108,17 @@ def _run_spark_iceberg_branch(raw_carts: list, raw_users: list) -> dict:
         logger.info("[SPARK] Writing analytics to Iceberg…")
         write_analytics_to_iceberg(customer_df, order_df)
 
+        logger.info("[SPARK] Writing analytics to DynamoDB Local…")
+        dynamodb_result = write_analytics_to_dynamodb(customer_df, order_df)
+
         customer_df.unpersist()
         order_df.unpersist()
 
         return {
             "customer_rows": customer_rows,
             "order_rows": order_rows,
+            "customer_items": dynamodb_result["customer_items"],
+            "order_items": dynamodb_result["order_items"],
         }
     finally:
         spark.stop()
@@ -115,22 +127,25 @@ def _run_spark_iceberg_branch(raw_carts: list, raw_users: list) -> dict:
 class Command(BaseCommand):
     help = (
         "Run the full ETL pipeline with two analytics branches: Pandas to "
-        "processed CSVs and PostgreSQL, and PySpark to Iceberg tables."
+        "processed CSVs, PostgreSQL, and OpenSearch, plus PySpark to "
+        "Iceberg and DynamoDB Local."
     )
 
     def add_arguments(self, parser):
+        """Register CLI flags that select which analytics branches to run."""
         parser.add_argument(
             '--pandas',
             action='store_true',
-            help='Run only the Pandas → PostgreSQL branch',
+            help='Run only the Pandas → PostgreSQL/OpenSearch branch',
         )
         parser.add_argument(
             '--pyspark',
             action='store_true',
-            help='Run only the PySpark → Iceberg branch',
+            help='Run only the PySpark → Iceberg/DynamoDB Local branch',
         )
 
     def handle(self, *args, **options) -> None:
+        """Execute extraction and run the requested Pandas and/or Spark branches."""
         run_pandas = options['pandas'] or not (options['pandas'] or options['pyspark'])
         run_pyspark = options['pyspark'] or not (options['pandas'] or options['pyspark'])
 
@@ -164,12 +179,12 @@ class Command(BaseCommand):
         # ── 2. Analytics branches ───────────────────────────────────────────
         if run_pandas and run_pyspark:
             logger.info(
-                "[STEP 2/2]  Running Pandas→PostgreSQL and PySpark→Iceberg branches…"
+                "[STEP 2/2]  Running Pandas→PostgreSQL/OpenSearch and PySpark→Iceberg/DynamoDB Local branches…"
             )
         elif run_pandas:
-            logger.info("[STEP 1/1]  Running Pandas→PostgreSQL branch…")
+            logger.info("[STEP 1/1]  Running Pandas→PostgreSQL/OpenSearch branch…")
         elif run_pyspark:
-            logger.info("[STEP 1/1]  Running PySpark→Iceberg branch…")
+            logger.info("[STEP 1/1]  Running PySpark→Iceberg/DynamoDB Local branch…")
 
         pandas_result = None
         spark_result = None
@@ -181,27 +196,31 @@ class Command(BaseCommand):
                 pandas_result = _run_pandas_postgres_branch(raw_carts, raw_users)
             except Exception as exc:
                 pandas_error = exc
-                logger.exception("Pandas → PostgreSQL branch failed")
+                logger.exception("Pandas → PostgreSQL/OpenSearch branch failed")
 
         if run_pyspark:
             try:
                 spark_result = _run_spark_iceberg_branch(raw_carts, raw_users)
             except Exception as exc:
                 spark_error = exc
-                logger.exception("PySpark → Iceberg branch failed")
+                logger.exception("PySpark → Iceberg/DynamoDB Local branch failed")
 
         if pandas_error or spark_error:
             messages = []
             if pandas_error:
-                messages.append(f"Pandas/PostgreSQL branch failed: {pandas_error}")
+                messages.append(
+                    f"Pandas/PostgreSQL/OpenSearch branch failed: {pandas_error}"
+                )
             if spark_error:
-                messages.append(f"PySpark/Iceberg branch failed: {spark_error}")
+                messages.append(
+                    f"PySpark/Iceberg/DynamoDB Local branch failed: {spark_error}"
+                )
             raise CommandError(" | ".join(messages))
 
         logger.info(_DIVIDER)
         if pandas_result:
             logger.info(
-                "  ✓ PostgreSQL branch  →  "
+                "  ✓ PostgreSQL/OpenSearch branch  →  "
                 f"{pandas_result['customer_rows']:>5} customer rows | "
                 f"{pandas_result['order_rows']:>5} order rows"
             )
@@ -210,17 +229,34 @@ class Command(BaseCommand):
                 f"customers {pandas_result['customer_created']} created / {pandas_result['customer_updated']} updated | "
                 f"orders {pandas_result['order_created']} created / {pandas_result['order_updated']} updated"
             )
+            logger.info(
+                "    OpenSearch        →  "
+                f"customers {pandas_result['customer_docs']} docs | "
+                f"orders {pandas_result['order_docs']} docs"
+            )
         if spark_result:
             logger.info(
-                "  ✓ Iceberg branch     →  "
+                "  ✓ Spark analytics    →  "
                 f"{spark_result['customer_rows']:>5} customer rows | "
                 f"{spark_result['order_rows']:>5} order rows"
             )
+            logger.info(
+                "    Iceberg           →  "
+                f"local.analytics.customer_analytics | "
+                f"local.analytics.order_analytics"
+            )
+            logger.info(
+                "    DynamoDB Local    →  "
+                f"customers {spark_result['customer_items']} items | "
+                f"orders {spark_result['order_items']} items"
+            )
         logger.info(_DIVIDER)
         if run_pandas and run_pyspark:
-            logger.info("  Full ETL complete across PostgreSQL and Iceberg.")
+            logger.info(
+                "  Full ETL complete across PostgreSQL, OpenSearch, Iceberg, and DynamoDB Local."
+            )
         elif run_pandas:
-            logger.info("  Pandas ETL complete.")
+            logger.info("  Pandas ETL complete across PostgreSQL and OpenSearch.")
         elif run_pyspark:
-            logger.info("  PySpark ETL complete.")
+            logger.info("  PySpark ETL complete across Iceberg and DynamoDB Local.")
         logger.info(_DIVIDER)

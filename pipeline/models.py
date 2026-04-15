@@ -30,6 +30,7 @@ class CustomerAnalytics(models.Model):
         verbose_name_plural = "Customer Analytics"
 
     def __str__(self) -> str:
+        """Return a concise label for display in the Django admin."""
         return f"{self.full_name} | {self.customer_segment} | {_CURRENCY_SYMBOL}{self.total_spent}"
 
 
@@ -60,4 +61,5 @@ class OrderAnalytics(models.Model):
         verbose_name_plural = "Order Analytics"
 
     def __str__(self) -> str:
+        """Return a concise label for display in the Django admin."""
         return f"Order {self.order_id[:8]}… | {_CURRENCY_SYMBOL}{self.final_amount} | {self.payment_method}"

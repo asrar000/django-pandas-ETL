@@ -22,6 +22,9 @@ data/processed/
 data/iceberg/
 logs/
 
+# DynamoDB Local (bind-mount data directory — generated at runtime)
+dynamodb_data/
+
 # OS
 .DS_Store
 Thumbs.db

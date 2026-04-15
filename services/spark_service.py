@@ -1,6 +1,4 @@
-"""
-Spark session factory for the parallel Iceberg analytics path.
-"""
+"""Spark session factory for the PySpark analytics branch."""
 import os
 
 from pyspark.sql import SparkSession
@@ -10,9 +8,7 @@ from utils.paths import ICEBERG_WAREHOUSE_DIR
 
 
 def build_spark_session() -> SparkSession:
-    """
-    Build a local Spark session configured with an Iceberg Hadoop catalog.
-    """
+    """Build a local Spark session configured for the Iceberg-backed Spark branch."""
     os.environ.setdefault("SPARK_LOCAL_IP", "127.0.0.1")
     os.environ.setdefault("SPARK_LOCAL_HOSTNAME", "localhost")
 

@@ -29,6 +29,26 @@ database:
   user: "etl_user"
   password: "etl_password"
 
+opensearch:
+  host: "localhost"
+  port: 9200
+  use_ssl: false
+  verify_certs: false
+  timeout: 30
+  customer_index: "customer_analytics"
+  order_index: "order_analytics"
+  spark_package: "org.opensearch.client:opensearch-spark-35_2.12:2.0.0"
+  username: ""
+  password: ""
+
+dynamodb:
+  endpoint_url: "http://localhost:8000"
+  region_name: "us-east-1"
+  access_key_id: "dummy"
+  secret_access_key: "dummy"
+  customer_table: "customer_analytics"
+  order_table: "order_analytics"
+
 paths:
   raw_dir: "data/raw"
   processed_dir: "data/processed"
