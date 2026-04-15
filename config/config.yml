@@ -41,6 +41,14 @@ opensearch:
   username: ""
   password: ""
 
+dynamodb:
+  endpoint_url: "http://localhost:8000"
+  region_name: "us-east-1"
+  access_key_id: "dummy"
+  secret_access_key: "dummy"
+  customer_table: "customer_analytics"
+  order_table: "order_analytics"
+
 paths:
   raw_dir: "data/raw"
   processed_dir: "data/processed"

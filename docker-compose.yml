@@ -1,11 +1,12 @@
 # ─────────────────────────────────────────────────────────────────────────────
-#  E-Commerce ETL Pipeline — PostgreSQL + OpenSearch via Docker
+#  E-Commerce ETL Pipeline — PostgreSQL + OpenSearch + DynamoDB Local via Docker
 #
-#  Start:   docker compose up -d db opensearch
+#  Start:   docker compose up -d db opensearch dynamodb-local
 #  Stop:    docker compose down
 #  Logs:    docker compose logs -f db
 #  psql:    docker compose exec db psql -U etl_user -d etl_db
 #  Search:  curl http://localhost:9200
+#  Dynamo:  http://localhost:8000
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -20,7 +21,7 @@ services:
       POSTGRES_PASSWORD: etl_password
 
     ports:
-      - "5432:5432"         # host:container — accessible at localhost:5432
+      - "5432:5432"
 
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -58,8 +59,28 @@ services:
     volumes:
       - opensearch_data:/usr/share/opensearch/data
 
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    container_name: ecommerce_etl_dynamodb_local
+    restart: unless-stopped
+    working_dir: /home/dynamodblocal
+    # FIX: -dbPath must point at a directory writable by uid 1000 (dynamodblocal user).
+    # The bind mount below gives us that control; the named volume approach fails
+    # because Docker initialises named volumes as root-owned.
+    command: "-jar DynamoDBLocal.jar -sharedDb -dbPath /home/dynamodblocal/data -disableTelemetry"
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      # FIX: bind mount instead of named volume so we can chmod before first run.
+      # Run once before `docker compose up`:
+      #   mkdir -p dynamodb_data && chmod 777 dynamodb_data
+      - ./dynamodb_data:/home/dynamodblocal/data
+
 volumes:
   postgres_data:
     driver: local
   opensearch_data:
     driver: local
+  # dynamodb_local_data removed — replaced by bind mount above
