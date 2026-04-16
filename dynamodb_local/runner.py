@@ -1,122 +1,98 @@
-"""DynamoDB Local orchestration and CLI helpers."""
+"""DynamoDB Local orchestration helpers."""
 
 from __future__ import annotations
 
 import argparse
-import json
-from decimal import Decimal
 
+import pandas as pd
 from pyspark.sql import DataFrame
 
-from dynamodb_local.client import build_dynamodb_client, build_dynamodb_resource
-from dynamodb_local.tables import get_customer_table_name, get_order_table_name
+from dynamodb_local.client import build_dynamodb_resource
 from dynamodb_local.writer import (
-    delete_table,
-    ensure_analytics_tables_exist,
-    scan_table_items,
-    write_spark_dataframe_to_table,
+    ensure_analytics_table_exists,
+    load_write_status,
+    write_combined_dataframes_to_table,
 )
+from utils.logger import get_logger
 
-
-def json_default(value):
-    """Serialize Decimal values for CLI JSON output."""
-    if isinstance(value, Decimal):
-        return float(value)
-    raise TypeError(f"Unsupported value for JSON serialization: {type(value)!r}")
+logger = get_logger(__name__)
 
 
 def write_analytics_to_dynamodb(
     customer_df: DataFrame,
     order_df: DataFrame,
-) -> dict[str, int]:
-    """Write both Spark analytics tables to DynamoDB Local."""
-    dynamodb = build_dynamodb_resource()
-    tables = ensure_analytics_tables_exist(dynamodb)
+) -> dict:
+    """Write both Spark analytics DataFrames into a single DynamoDB Local table.
 
-    customer_items = write_spark_dataframe_to_table(
-        customer_df,
-        tables["customer_table"],
-    )
-    order_items = write_spark_dataframe_to_table(
-        order_df,
-        tables["order_table"],
-    )
+    Returns a summary dict with ``total``, ``written``, and ``failed`` counts
+    plus the full ``status_df`` for downstream use.
+    """
+    dynamodb = build_dynamodb_resource()
+    table = ensure_analytics_table_exists(dynamodb)
+
+    status_df = write_combined_dataframes_to_table(customer_df, order_df, table)
+
+    written = int(status_df["written"].sum())
+    total = len(status_df)
 
     return {
-        "customer_items": customer_items,
-        "order_items": order_items,
+        "total": total,
+        "written": written,
+        "failed": total - written,
+        "status_df": status_df,
     }
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run DynamoDB Local utility commands from the command line."""
+    """DynamoDB Local CLI — view persisted write-status after an ETL run."""
     parser = argparse.ArgumentParser(description="DynamoDB Local helper commands")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("list-tables", help="List local DynamoDB tables")
-
-    delete_table_parser = subparsers.add_parser(
-        "delete-table",
-        help="Delete one local DynamoDB table",
+    view_parser = subparsers.add_parser(
+        "view-status",
+        help="Print the write-status of the last ETL run",
     )
-    delete_table_parser.add_argument("table_name")
-
-    subparsers.add_parser("delete-all", help="Delete both analytics tables")
-
-    scan_table_parser = subparsers.add_parser(
-        "scan-table",
-        help="Scan and print items from one local DynamoDB table",
+    view_parser.add_argument(
+        "--failed-only",
+        action="store_true",
+        help="Show only records that were NOT written successfully",
     )
-    scan_table_parser.add_argument("table_name")
-    scan_table_parser.add_argument("--limit", type=int, default=10)
-
-    scan_all_parser = subparsers.add_parser(
-        "scan-all",
-        help="Scan and print items from both analytics tables",
+    view_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit the number of rows printed (default: all)",
     )
-    scan_all_parser.add_argument("--limit", type=int, default=10)
 
     args = parser.parse_args(argv)
-    dynamodb = build_dynamodb_resource()
-    client = build_dynamodb_client()
 
-    if args.command == "list-tables":
-        print(json.dumps(client.list_tables()["TableNames"], indent=2))
-        return 0
+    if args.command == "view-status":
+        df = load_write_status()
+        if df is None:
+            print("No write-status file found. Run the ETL pipeline first.")
+            return 1
 
-    if args.command == "delete-table":
-        delete_table(dynamodb, args.table_name)
-        return 0
+        if args.failed_only:
+            df = df[~df["written"]]
 
-    if args.command == "delete-all":
-        delete_table(dynamodb, get_customer_table_name())
-        delete_table(dynamodb, get_order_table_name())
-        return 0
+        if args.limit is not None:
+            df = df.head(args.limit)
 
-    if args.command == "scan-table":
-        print(
-            json.dumps(
-                scan_table_items(dynamodb, args.table_name, limit=args.limit),
-                indent=2,
-                default=json_default,
-            )
-        )
-        return 0
+        total = len(df) if not args.failed_only else None
+        written = int(df["written"].sum()) if not args.failed_only else None
+        failed = int((~df["written"]).sum()) if not args.failed_only else len(df)
 
-    if args.command == "scan-all":
-        payload = {
-            get_customer_table_name(): scan_table_items(
-                dynamodb,
-                get_customer_table_name(),
-                limit=args.limit,
-            ),
-            get_order_table_name(): scan_table_items(
-                dynamodb,
-                get_order_table_name(),
-                limit=args.limit,
-            ),
-        }
-        print(json.dumps(payload, indent=2, default=json_default))
+        if not args.failed_only:
+            print(f"\nWrite status summary — {written}/{total} records written successfully")
+            if failed:
+                print(f"  {failed} record(s) failed\n")
+            else:
+                print()
+
+        pd.set_option("display.max_rows", None)
+        pd.set_option("display.max_colwidth", 60)
+        print(df.to_string(index=False))
+        print()
         return 0
 
     return 1

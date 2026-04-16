@@ -1,22 +1,19 @@
 """Public helpers for local DynamoDB analytics storage."""
 
-from dynamodb_local.client import build_dynamodb_client, build_dynamodb_resource
+from dynamodb_local.client import build_dynamodb_resource
 from dynamodb_local.tables import (
-    CUSTOMER_TABLE_DEFINITION,
-    ORDER_TABLE_DEFINITION,
-    get_customer_table_name,
-    get_order_table_name,
+    ANALYTICS_TABLE_DEFINITION,
+    get_analytics_table_name,
 )
 from dynamodb_local.writer import (
-    delete_table,
-    ensure_analytics_tables_exist,
-    scan_table_items,
-    write_spark_dataframe_to_table,
+    ensure_analytics_table_exists,
+    write_combined_dataframes_to_table,
+    load_write_status,
 )
 
 
 def write_analytics_to_dynamodb(*args, **kwargs):
-    """Write the Spark analytics DataFrames to DynamoDB Local."""
+    """Write the combined Spark analytics DataFrame to DynamoDB Local."""
     from dynamodb_local.runner import write_analytics_to_dynamodb as _write
 
     return _write(*args, **kwargs)
@@ -28,17 +25,14 @@ def main(argv=None):
 
     return _main(argv)
 
+
 __all__ = [
-    "CUSTOMER_TABLE_DEFINITION",
-    "ORDER_TABLE_DEFINITION",
-    "build_dynamodb_client",
+    "ANALYTICS_TABLE_DEFINITION",
     "build_dynamodb_resource",
-    "delete_table",
-    "ensure_analytics_tables_exist",
-    "get_customer_table_name",
-    "get_order_table_name",
+    "ensure_analytics_table_exists",
+    "get_analytics_table_name",
+    "load_write_status",
     "main",
-    "scan_table_items",
     "write_analytics_to_dynamodb",
-    "write_spark_dataframe_to_table",
+    "write_combined_dataframes_to_table",
 ]

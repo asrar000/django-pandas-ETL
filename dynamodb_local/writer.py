@@ -1,23 +1,24 @@
-"""DynamoDB Local table management and write helpers."""
+"""DynamoDB Local table management and combined write helpers."""
 
 from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
-from botocore.exceptions import ClientError
+import pandas as pd
 from pyspark.sql import DataFrame
 
-from dynamodb_local.tables import (
-    CUSTOMER_TABLE_DEFINITION,
-    ORDER_TABLE_DEFINITION,
-    get_customer_table_name,
-    get_order_table_name,
-)
+from config.loader import get
+from dynamodb_local.tables import ANALYTICS_TABLE_DEFINITION, get_analytics_table_name
 from utils.logger import get_logger
+from utils.paths import PROCESSED_DIR
 
 logger = get_logger(__name__)
+
+# Write-status CSV is persisted here so the CLI can read it after the run.
+_STATUS_PATH: Path = PROCESSED_DIR / "dynamodb_write_status.csv"
 
 
 def serialize_dynamodb_value(value: Any) -> Any:
@@ -27,100 +28,113 @@ def serialize_dynamodb_value(value: Any) -> Any:
     if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, float):
+        # str() first — avoids carrying IEEE-754 imprecision into Decimal
         return Decimal(str(value))
     if isinstance(value, list):
         return [serialize_dynamodb_value(item) for item in value]
     if isinstance(value, dict):
-        return {
-            key: serialize_dynamodb_value(item)
-            for key, item in value.items()
-        }
+        return {k: serialize_dynamodb_value(v) for k, v in value.items()}
     return value
 
 
-def ensure_table_exists(dynamodb, table_name: str, table_definition: dict[str, str]):
-    """Create a DynamoDB Local table if it does not already exist."""
-    existing_tables = set(dynamodb.meta.client.list_tables()["TableNames"])
-    if table_name in existing_tables:
+def ensure_analytics_table_exists(dynamodb):
+    """Create the combined analytics table if it does not already exist."""
+    table_name = get_analytics_table_name()
+    key_name = ANALYTICS_TABLE_DEFINITION["key_name"]
+    attr_type = ANALYTICS_TABLE_DEFINITION["attribute_type"]
+
+    existing = set(dynamodb.meta.client.list_tables()["TableNames"])
+    if table_name in existing:
         logger.info(f"Reusing DynamoDB Local table → {table_name}")
         return dynamodb.Table(table_name)
 
     table = dynamodb.create_table(
         TableName=table_name,
-        KeySchema=[
-            {
-                "AttributeName": table_definition["key_name"],
-                "KeyType": "HASH",
-            }
-        ],
-        AttributeDefinitions=[
-            {
-                "AttributeName": table_definition["key_name"],
-                "AttributeType": table_definition["attribute_type"],
-            }
-        ],
-        ProvisionedThroughput={
-            "ReadCapacityUnits": 5,
-            "WriteCapacityUnits": 5,
-        },
+        KeySchema=[{"AttributeName": key_name, "KeyType": "HASH"}],
+        AttributeDefinitions=[{"AttributeName": key_name, "AttributeType": attr_type}],
+        ProvisionedThroughput={"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
     )
     table.wait_until_exists()
     logger.info(f"Created DynamoDB Local table → {table_name}")
     return table
 
 
-def ensure_analytics_tables_exist(dynamodb) -> dict[str, Any]:
-    """Ensure both analytics tables exist in DynamoDB Local."""
-    customer_table_name = get_customer_table_name()
-    order_table_name = get_order_table_name()
-    return {
-        "customer_table": ensure_table_exists(
-            dynamodb,
-            customer_table_name,
-            CUSTOMER_TABLE_DEFINITION,
-        ),
-        "order_table": ensure_table_exists(
-            dynamodb,
-            order_table_name,
-            ORDER_TABLE_DEFINITION,
-        ),
-    }
+def write_combined_dataframes_to_table(
+    customer_df: DataFrame,
+    order_df: DataFrame,
+    table,
+) -> pd.DataFrame:
+    """Write both Spark DataFrames into a single DynamoDB table.
 
+    Records are prefixed so their origin is unambiguous:
+      customer rows  →  record_id = "customer#<customer_id>"
+      order rows     →  record_id = "order#<order_id>"
 
-def write_spark_dataframe_to_table(df: DataFrame, table) -> int:
-    """Write a Spark DataFrame to a DynamoDB Local table via batch writes."""
-    written = 0
-    with table.batch_writer(overwrite_by_pkeys=[table.key_schema[0]["AttributeName"]]) as batch:
-        for row in df.toLocalIterator():
-            batch.put_item(
-                Item={
-                    key: serialize_dynamodb_value(value)
-                    for key, value in row.asDict(recursive=True).items()
-                }
-            )
-            written += 1
-    logger.info(f"Wrote {written} items to DynamoDB Local table → {table.name}")
-    return written
+    Returns a pandas DataFrame with columns (record_id, written) where
+    ``written`` is True for every record that was successfully persisted
+    and False for any that failed.
+    """
+    # ── 1. Materialise all items on the driver ────────────────────────────
+    all_items: list[tuple[str, dict]] = []
 
+    for row in customer_df.toLocalIterator():
+        d = row.asDict(recursive=True)
+        record_id = f"customer#{d.get('customer_id', '')}"
+        item: dict = {
+            "record_id": record_id,
+            "record_type": "customer",
+        }
+        item.update({k: serialize_dynamodb_value(v) for k, v in d.items()})
+        all_items.append((record_id, item))
 
-def delete_table(dynamodb, table_name: str) -> bool:
-    """Delete a DynamoDB Local table if it exists."""
+    for row in order_df.toLocalIterator():
+        d = row.asDict(recursive=True)
+        record_id = f"order#{d.get('order_id', '')}"
+        item = {
+            "record_id": record_id,
+            "record_type": "order",
+        }
+        item.update({k: serialize_dynamodb_value(v) for k, v in d.items()})
+        all_items.append((record_id, item))
+
+    # ── 2. Batch-write all items ─────────────────────────────────────────
+    # boto3 batch_writer buffers calls and flushes every 25 items
+    # (DynamoDB BatchWriteItem limit) and on context exit.
+    # Failures are raised at flush time, not per put_item call, so
+    # success/failure is treated atomically for the whole batch.
+    failed_ids: set[str] = set()
     try:
-        table = dynamodb.Table(table_name)
-        table.delete()
-        table.wait_until_not_exists()
-        logger.info(f"Deleted DynamoDB Local table → {table_name}")
-        return True
-    except ClientError as exc:
-        error_code = exc.response.get("Error", {}).get("Code")
-        if error_code == "ResourceNotFoundException":
-            logger.info(f"DynamoDB Local table not found → {table_name}")
-            return False
-        raise
+        with table.batch_writer(overwrite_by_pkeys=["record_id"]) as batch:
+            for _rid, item in all_items:
+                batch.put_item(Item=item)
+    except Exception as exc:
+        logger.error(f"Batch write failed: {exc}")
+        failed_ids = {rid for rid, _ in all_items}
+
+    written_count = len(all_items) - len(failed_ids)
+    logger.info(
+        f"Wrote {written_count}/{len(all_items)} items "
+        f"→ DynamoDB Local table '{table.name}'"
+    )
+
+    # ── 3. Build and persist write-status DataFrame ───────────────────────
+    status_df = pd.DataFrame(
+        [
+            {"record_id": rid, "written": rid not in failed_ids}
+            for rid, _ in all_items
+        ],
+        columns=["record_id", "written"],
+    )
+
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    status_df.to_csv(_STATUS_PATH, index=False)
+    logger.info(f"Write status saved → {_STATUS_PATH}")
+
+    return status_df
 
 
-def scan_table_items(dynamodb, table_name: str, limit: int = 10) -> list[dict[str, Any]]:
-    """Scan up to *limit* items from a DynamoDB Local table."""
-    table = dynamodb.Table(table_name)
-    response = table.scan(Limit=limit)
-    return response.get("Items", [])
+def load_write_status() -> pd.DataFrame | None:
+    """Load the persisted write-status CSV, or return None if it does not exist."""
+    if not _STATUS_PATH.exists():
+        return None
+    return pd.read_csv(_STATUS_PATH)

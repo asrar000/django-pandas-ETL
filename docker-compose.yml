@@ -1,12 +1,12 @@
 # ─────────────────────────────────────────────────────────────────────────────
-#  E-Commerce ETL Pipeline — PostgreSQL + OpenSearch + Iceberg + DynamoDB Local via Docker
+#  E-Commerce ETL Pipeline — PostgreSQL + OpenSearch + DynamoDB Local via Docker
 #
-#  Start:   docker compose up -d db opensearch dynamodb-local
+#  Start:   docker compose up -d db opensearch dynamodb-local dynamodb-admin
 #  Stop:    docker compose down
-#  Logs:    docker compose logs -f db
+#  Logs:    docker compose logs -f dynamodb-local
 #  psql:    docker compose exec db psql -U etl_user -d etl_db
-#  Search:  curl http://localhost:9200
 #  Dynamo:  http://localhost:8000
+#  Dashboard: http://localhost:8001
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -64,23 +64,33 @@ services:
     container_name: ecommerce_etl_dynamodb_local
     restart: unless-stopped
     working_dir: /home/dynamodblocal
-    # FIX: -dbPath must point at a directory writable by uid 1000 (dynamodblocal user).
-    # The bind mount below gives us that control; the named volume approach fails
-    # because Docker initialises named volumes as root-owned.
     command: "-jar DynamoDBLocal.jar -sharedDb -dbPath /home/dynamodblocal/data -disableTelemetry"
 
     ports:
       - "8000:8000"
 
     volumes:
-      # FIX: bind mount instead of named volume so we can chmod before first run.
-      # Run once before `docker compose up`:
-      #   mkdir -p dynamodb_data && chmod 777 dynamodb_data
       - ./dynamodb_data:/home/dynamodblocal/data
+
+  dynamodb-admin:
+    image: aaronshaf/dynamodb-admin
+    container_name: ecommerce_etl_dynamodb_admin
+    restart: unless-stopped
+
+    environment:
+      DYNAMO_ENDPOINT: "http://dynamodb-local:8000"
+      AWS_REGION: "us-east-1"
+      AWS_ACCESS_KEY_ID: "dummy"
+      AWS_SECRET_ACCESS_KEY: "dummy"
+
+    ports:
+      - "8001:8001"
+
+    depends_on:
+      - dynamodb-local
 
 volumes:
   postgres_data:
     driver: local
   opensearch_data:
     driver: local
-  # dynamodb_local_data removed — replaced by bind mount above

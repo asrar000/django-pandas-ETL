@@ -5,15 +5,19 @@ PostgreSQL, and OpenSearch, plus the PySpark analytics branch from the same
 extracted seed data, with Iceberg and DynamoDB Local writes on the Spark side.
 
 Usage:
-    python manage.py etl                    # Run both branches
-    python manage.py etl --pandas           # Run only Pandas → PostgreSQL/OpenSearch branch
-    python manage.py etl --pyspark          # Run only PySpark → Iceberg/DynamoDB Local branch
+    python manage.py etl                        # Run both branches
+    python manage.py etl --pandas               # Run only Pandas → PostgreSQL/OpenSearch branch
+    python manage.py etl --pyspark              # Run only PySpark → Iceberg/DynamoDB Local branch
+    python manage.py etl --view-dynamodb-status # Print last DynamoDB write-status (no ETL run)
+    python manage.py etl --view-dynamodb-status --failed-only
+    python manage.py etl --view-dynamodb-status --limit 20
 """
 
 from django.core.management.base import BaseCommand, CommandError
 
 from config.loader import get
 from dynamodb_local.runner import write_analytics_to_dynamodb
+from dynamodb_local.writer import load_write_status
 from extractor.api_extractor import extract_all
 from opensearch.runner import opensearch_write
 from processing.enrichment import enrich_all
@@ -30,6 +34,8 @@ from transformation.spark_order_transformer import build_order_analytics_spark
 from utils.logger import get_logger
 from utils.paths import ensure_dirs
 from utils.writer import write_processed_csv, write_raw_json
+
+import pandas as pd
 
 logger = get_logger("pipeline.management.commands.etl")
 
@@ -81,7 +87,7 @@ def _run_pandas_postgres_branch(raw_carts: list, raw_users: list) -> dict:
 def _run_spark_iceberg_branch(raw_carts: list, raw_users: list) -> dict:
     """
     Spark analytics flow that mirrors the Pandas business logic and writes the
-    resulting analytics tables to Iceberg and DynamoDB Local.
+    resulting analytics tables to Iceberg and DynamoDB Local (single table).
     """
     num_records = int(get("processing.num_synthetic_records", 10_000))
     spark = build_spark_session()
@@ -117,37 +123,88 @@ def _run_spark_iceberg_branch(raw_carts: list, raw_users: list) -> dict:
         return {
             "customer_rows": customer_rows,
             "order_rows": order_rows,
-            "customer_items": dynamodb_result["customer_items"],
-            "order_items": dynamodb_result["order_items"],
+            "dynamodb_total": dynamodb_result["total"],
+            "dynamodb_written": dynamodb_result["written"],
+            "dynamodb_failed": dynamodb_result["failed"],
         }
     finally:
         spark.stop()
 
 
+def _print_write_status(failed_only: bool = False, limit: int | None = None) -> None:
+    """Load and print the persisted DynamoDB write-status CSV."""
+    df = load_write_status()
+    if df is None:
+        print("No write-status file found. Run the ETL pipeline first.")
+        return
+
+    if failed_only:
+        df = df[~df["written"]]
+        print(f"\nFailed records: {len(df)}\n")
+    else:
+        total = len(df)
+        written = int(df["written"].sum())
+        failed = total - written
+        print(f"\nDynamoDB write status — {written}/{total} records written successfully")
+        if failed:
+            print(f"  {failed} record(s) failed")
+        print()
+
+    if limit is not None:
+        df = df.head(limit)
+
+    pd.set_option("display.max_rows", None)
+    pd.set_option("display.max_colwidth", 60)
+    print(df.to_string(index=False))
+    print()
+
+
 class Command(BaseCommand):
     help = (
-        "Run the full ETL pipeline with two analytics branches: Pandas to "
-        "processed CSVs, PostgreSQL, and OpenSearch, plus PySpark to "
-        "Iceberg and DynamoDB Local."
+        "Run the full ETL pipeline (Pandas → PostgreSQL/OpenSearch and "
+        "PySpark → Iceberg/DynamoDB Local), or inspect the last DynamoDB "
+        "write-status without running the pipeline."
     )
 
     def add_arguments(self, parser):
-        """Register CLI flags that select which analytics branches to run."""
         parser.add_argument(
-            '--pandas',
-            action='store_true',
-            help='Run only the Pandas → PostgreSQL/OpenSearch branch',
+            "--pandas",
+            action="store_true",
+            help="Run only the Pandas → PostgreSQL/OpenSearch branch",
         )
         parser.add_argument(
-            '--pyspark',
-            action='store_true',
-            help='Run only the PySpark → Iceberg/DynamoDB Local branch',
+            "--pyspark",
+            action="store_true",
+            help="Run only the PySpark → Iceberg/DynamoDB Local branch",
+        )
+        parser.add_argument(
+            "--view-dynamodb-status",
+            action="store_true",
+            help="Print the DynamoDB write-status from the last run (no ETL run)",
+        )
+        parser.add_argument(
+            "--failed-only",
+            action="store_true",
+            help="Used with --view-dynamodb-status: show only failed records",
+        )
+        parser.add_argument(
+            "--limit",
+            type=int,
+            default=None,
+            help="Used with --view-dynamodb-status: limit rows printed",
         )
 
     def handle(self, *args, **options) -> None:
-        """Execute extraction and run the requested Pandas and/or Spark branches."""
-        run_pandas = options['pandas'] or not (options['pandas'] or options['pyspark'])
-        run_pyspark = options['pyspark'] or not (options['pandas'] or options['pyspark'])
+        # ── Status view shortcut — no ETL run ────────────────────────────
+        if options["view_dynamodb_status"]:
+            _print_write_status(
+                failed_only=options["failed_only"],
+                limit=options["limit"],
+            )
+            return
+
+        run_pandas = options["pandas"] or not (options["pandas"] or options["pyspark"])
+        run_pyspark = options["pyspark"] or not (options["pandas"] or options["pyspark"])
 
         if run_pandas and run_pyspark:
             logger.info(_DIVIDER)
@@ -162,10 +219,10 @@ class Command(BaseCommand):
             logger.info("      Generic E-Commerce ETL Pipeline  —  PySpark Branch Only")
             logger.info(_DIVIDER)
 
-        # ── 0. Setup directories ─────────────────────────────────────────────
+        # ── 0. Setup directories ─────────────────────────────────────────
         ensure_dirs()
 
-        # ── 1. Extract ───────────────────────────────────────────────────────
+        # ── 1. Extract ───────────────────────────────────────────────────
         logger.info("[STEP 1/2]  Extracting raw data from API…")
         try:
             raw_carts, raw_users = extract_all()
@@ -176,10 +233,11 @@ class Command(BaseCommand):
         write_raw_json(raw_carts, "raw_carts.json")
         write_raw_json(raw_users, "raw_users.json")
 
-        # ── 2. Analytics branches ───────────────────────────────────────────
+        # ── 2. Analytics branches ────────────────────────────────────────
         if run_pandas and run_pyspark:
             logger.info(
-                "[STEP 2/2]  Running Pandas→PostgreSQL/OpenSearch and PySpark→Iceberg/DynamoDB Local branches…"
+                "[STEP 2/2]  Running Pandas→PostgreSQL/OpenSearch and "
+                "PySpark→Iceberg/DynamoDB Local branches…"
             )
         elif run_pandas:
             logger.info("[STEP 1/1]  Running Pandas→PostgreSQL/OpenSearch branch…")
@@ -208,13 +266,9 @@ class Command(BaseCommand):
         if pandas_error or spark_error:
             messages = []
             if pandas_error:
-                messages.append(
-                    f"Pandas/PostgreSQL/OpenSearch branch failed: {pandas_error}"
-                )
+                messages.append(f"Pandas/PostgreSQL/OpenSearch branch failed: {pandas_error}")
             if spark_error:
-                messages.append(
-                    f"PySpark/Iceberg/DynamoDB Local branch failed: {spark_error}"
-                )
+                messages.append(f"PySpark/Iceberg/DynamoDB Local branch failed: {spark_error}")
             raise CommandError(" | ".join(messages))
 
         logger.info(_DIVIDER)
@@ -226,8 +280,10 @@ class Command(BaseCommand):
             )
             logger.info(
                 "    ORM upserts        →  "
-                f"customers {pandas_result['customer_created']} created / {pandas_result['customer_updated']} updated | "
-                f"orders {pandas_result['order_created']} created / {pandas_result['order_updated']} updated"
+                f"customers {pandas_result['customer_created']} created / "
+                f"{pandas_result['customer_updated']} updated | "
+                f"orders {pandas_result['order_created']} created / "
+                f"{pandas_result['order_updated']} updated"
             )
             logger.info(
                 "    OpenSearch        →  "
@@ -242,19 +298,22 @@ class Command(BaseCommand):
             )
             logger.info(
                 "    Iceberg           →  "
-                f"local.analytics.customer_analytics | "
-                f"local.analytics.order_analytics"
+                "local.analytics.customer_analytics | "
+                "local.analytics.order_analytics"
             )
             logger.info(
                 "    DynamoDB Local    →  "
-                f"customers {spark_result['customer_items']} items | "
-                f"orders {spark_result['order_items']} items"
+                f"{spark_result['dynamodb_written']}/{spark_result['dynamodb_total']} "
+                f"records written to 'etl_analytics' "
+                f"({spark_result['dynamodb_failed']} failed)"
+            )
+            logger.info(
+                "    Write status      →  "
+                "python manage.py etl --view-dynamodb-status"
             )
         logger.info(_DIVIDER)
         if run_pandas and run_pyspark:
-            logger.info(
-                "  Full ETL complete across PostgreSQL, OpenSearch, Iceberg, and DynamoDB Local."
-            )
+            logger.info("  Full ETL complete across PostgreSQL, OpenSearch, Iceberg, and DynamoDB Local.")
         elif run_pandas:
             logger.info("  Pandas ETL complete across PostgreSQL and OpenSearch.")
         elif run_pyspark:
