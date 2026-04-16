@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any,Iterable, Tuple
 
 import pandas as pd
 from pyspark.sql import DataFrame
@@ -35,6 +35,24 @@ def serialize_dynamodb_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {k: serialize_dynamodb_value(v) for k, v in value.items()}
     return value
+
+
+def collect_items_from_df(
+    df: DataFrame,
+    id_field: str,
+    prefix: str,
+    record_type: str,
+) -> Iterable[Tuple[str, dict]]:
+    """Yield (record_id, item) for every row in df."""
+    for row in df.toLocalIterator():
+        d = row.asDict(recursive=True)
+        record_id = f"{prefix}#{d.get(id_field, '')}"
+        item = {
+            "record_id": record_id,
+            "record_type": record_type,
+        }
+        item.update({k: serialize_dynamodb_value(v) for k, v in d.items()})
+        yield (record_id, item)
 
 
 def ensure_analytics_table_exists(dynamodb):
@@ -77,31 +95,16 @@ def write_combined_dataframes_to_table(
     # ── 1. Materialise all items on the driver ────────────────────────────
     all_items: list[tuple[str, dict]] = []
 
-    for row in customer_df.toLocalIterator():
-        d = row.asDict(recursive=True)
-        record_id = f"customer#{d.get('customer_id', '')}"
-        item: dict = {
-            "record_id": record_id,
-            "record_type": "customer",
-        }
-        item.update({k: serialize_dynamodb_value(v) for k, v in d.items()})
-        all_items.append((record_id, item))
+    # collect customers
+    all_items.extend(collect_items_from_df(
+        customer_df, id_field="customer_id", prefix="customer", record_type="customer"
+    ))
 
-    for row in order_df.toLocalIterator():
-        d = row.asDict(recursive=True)
-        record_id = f"order#{d.get('order_id', '')}"
-        item = {
-            "record_id": record_id,
-            "record_type": "order",
-        }
-        item.update({k: serialize_dynamodb_value(v) for k, v in d.items()})
-        all_items.append((record_id, item))
+    # collect orders
+    all_items.extend(collect_items_from_df(
+        order_df, id_field="order_id", prefix="order", record_type="order"
+    ))
 
-    # ── 2. Batch-write all items ─────────────────────────────────────────
-    # boto3 batch_writer buffers calls and flushes every 25 items
-    # (DynamoDB BatchWriteItem limit) and on context exit.
-    # Failures are raised at flush time, not per put_item call, so
-    # success/failure is treated atomically for the whole batch.
     failed_ids: set[str] = set()
     try:
         with table.batch_writer(overwrite_by_pkeys=["record_id"]) as batch:
