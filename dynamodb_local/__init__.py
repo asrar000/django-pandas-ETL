@@ -7,7 +7,7 @@ from dynamodb_local.tables import (
 )
 from dynamodb_local.writer import (
     ensure_analytics_table_exists,
-    write_combined_dataframes_to_table,
+    write_combined_dataframes_to_DynamoDB_table,
     load_write_status,
 )
 
@@ -34,5 +34,5 @@ __all__ = [
     "load_write_status",
     "main",
     "write_analytics_to_dynamodb",
-    "write_combined_dataframes_to_table",
+    "write_combined_dataframes_to_DynamoDB_table",
 ]

@@ -11,7 +11,7 @@ from dynamodb_local.client import build_dynamodb_resource
 from dynamodb_local.writer import (
     ensure_analytics_table_exists,
     load_write_status,
-    write_combined_dataframes_to_table,
+    write_combined_dataframes_to_DynamoDB_table,
 )
 from utils.logger import get_logger
 
@@ -30,7 +30,7 @@ def write_analytics_to_dynamodb(
     dynamodb = build_dynamodb_resource()
     table = ensure_analytics_table_exists(dynamodb)
 
-    status_df = write_combined_dataframes_to_table(customer_df, order_df, table)
+    status_df = write_combined_dataframes_to_DynamoDB_table(customer_df, order_df, table)
 
     written = int(status_df["written"].sum())
     total = len(status_df)

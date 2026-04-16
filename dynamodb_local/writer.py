@@ -77,7 +77,7 @@ def ensure_analytics_table_exists(dynamodb):
     return table
 
 
-def write_combined_dataframes_to_table(
+def write_combined_dataframes_to_DynamoDB_table(
     customer_df: DataFrame,
     order_df: DataFrame,
     table,
